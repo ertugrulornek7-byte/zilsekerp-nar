@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.18.35"; // Gün.Ay.Saat.Dakika
+const VERSION = "19.01.20.16"; // Sistem Kütüphanesi Onarımı
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -26,10 +26,12 @@ const firebaseConfig = {
   measurementId: "G-F62G5ZSBVL"
 };
 
+// Firebase başlatma
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// App ID kontrolü - Hata önleyici kontrol eklendi
 const appId = (typeof window !== 'undefined' && window['__app_id']) ? window['__app_id'] : 'smart-bell-app-pro';
 
 const DAYS = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"];
@@ -40,8 +42,18 @@ const DEFAULT_SOUNDS = [
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
-  const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
+  const [profileName, setProfileName] = useState(() => {
+    if (typeof window !== 'undefined') {
+        return localStorage.getItem('bell_profile_name') || '';
+    }
+    return '';
+  });
+  const [isStation, setIsStation] = useState(() => {
+    if (typeof window !== 'undefined') {
+        return localStorage.getItem('bell_is_station') === 'true';
+    }
+    return false;
+  });
   const [activeTab, setActiveTab] = useState('control'); 
   const [isIOS, setIsIOS] = useState(false);
   
@@ -72,14 +84,17 @@ export default function App() {
   const [passwordModal, setPasswordModal] = useState(false);
   
   // Refs
-  const stationAudioRef = useRef(new Audio()); 
-  const previewAudioRef = useRef(new Audio());
+  const stationAudioRef = useRef(null); 
+  const previewAudioRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioQueueRef = useRef([]); 
   const isPlayingQueueRef = useRef(false);
+  const autoStopTimerRef = useRef(null);
+  const audioChunksRef = useRef([]); // Ses parçalarını biriktirmek için
 
   // --- 1. BAŞLANGIÇ AYARLARI ---
   useEffect(() => {
+    // Tailwind Script Kontrolü
     if (!document.getElementById('tailwind-script')) {
       const script = document.createElement('script');
       script.id = 'tailwind-script';
@@ -88,40 +103,40 @@ export default function App() {
       document.head.appendChild(script);
     }
     
-    // iOS Tespiti
-    const userAgent = window.navigator.userAgent.toLowerCase();
-    setIsIOS(/iphone|ipad|ipod/.test(userAgent));
+    // Audio Nesnelerini Başlat (Sadece istemci tarafında)
+    if (typeof window !== 'undefined') {
+        stationAudioRef.current = new Audio();
+        previewAudioRef.current = new Audio();
+        
+        // iOS Tespiti
+        const userAgent = window.navigator.userAgent.toLowerCase();
+        setIsIOS(/iphone|ipad|ipod/.test(userAgent));
 
-    // Audio Error Handling
-    const audioEl = stationAudioRef.current;
-    const previewEl = previewAudioRef.current;
-    
-    if (audioEl) audioEl.onerror = (e) => console.warn("Audio Error:", e);
-    if (previewEl) previewEl.onerror = (e) => console.warn("Preview Error:", e);
+        // Audio Error Handling
+        stationAudioRef.current.onerror = (e) => console.warn("Audio Error:", e);
+        previewAudioRef.current.onerror = (e) => console.warn("Preview Error:", e);
+    }
     
     // Cleanup
     return () => {
-        if(audioEl) audioEl.pause();
-        if(previewEl) previewEl.pause();
+        if(stationAudioRef.current) stationAudioRef.current.pause();
+        if(previewAudioRef.current) previewAudioRef.current.pause();
+        if(autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     };
   }, []);
 
-  // --- 2. AUTHENTICATION (Düzeltildi) ---
+  // --- 2. AUTHENTICATION ---
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Eğer ortam değişkenleri varsa ve token sağlanmışsa önce onu dene
         if (typeof window !== 'undefined' && window['__initial_auth_token']) {
             try {
                 await signInWithCustomToken(auth, window['__initial_auth_token']);
             } catch (tokenError) {
-                // Eğer token uyuşmazlığı varsa (auth/custom-token-mismatch),
-                // muhtemelen kendi config'imizi kullanıyoruzdur. Anonim girişe geç.
                 console.warn("Token mismatch, anonim girişe geçiliyor:", tokenError);
                 await signInAnonymously(auth);
             }
         } else {
-            // Token yoksa direkt anonim giriş yap
             await signInAnonymously(auth);
         }
       } catch (err) { 
@@ -133,9 +148,9 @@ export default function App() {
     return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // --- SES İŞLEME MANTIĞI (useCallback ile sarmalandı) ---
+  // --- SES İŞLEME MANTIĞI (Queue Sistemi) ---
   const processAudioQueue = useCallback(() => {
-      if (isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
+      if (isPlayingQueueRef.current || audioQueueRef.current.length === 0 || !stationAudioRef.current) return;
 
       isPlayingQueueRef.current = true;
       const nextChunk = audioQueueRef.current.shift();
@@ -167,8 +182,8 @@ export default function App() {
       if (docSnap.exists()) {
         const data = docSnap.data();
         
-        if (isStation) {
-            if (data.volume !== undefined && stationAudioRef.current) {
+        if (isStation && stationAudioRef.current) {
+            if (data.volume !== undefined) {
                 stationAudioRef.current.volume = Math.max(0, Math.min(1, data.volume / 100));
             }
             if (data.stopSignal && data.stopSignal !== systemState.stopSignal) {
@@ -186,14 +201,17 @@ export default function App() {
 
     let unsubLiveStream = () => {};
     if (isStation) {
+        // Live stream koleksiyonunu dinle
         const streamQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), orderBy('createdAt', 'asc'));
         unsubLiveStream = onSnapshot(streamQuery, (snapshot) => {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
-                    if (Date.now() - audioData.createdAt < 15000) {
+                    // Mesajın ne zaman oluşturulduğuna bak (60 sn içindeki mesajları kabul et)
+                    if (Date.now() - audioData.createdAt < 60000) {
                         playAudioChunk(audioData.url);
                     }
+                    // Oynatılan veya eski mesajı sil
                     deleteDoc(change.doc.ref).catch(() => {});
                 }
             });
@@ -225,15 +243,17 @@ export default function App() {
     
     const interval = setInterval(() => {
       const now = new Date();
-      const currentDay = DAYS[now.getDay() === 0 ? 6 : now.getDay() - 1];
+      // getDay: 0=Pazar, 1=Pazartesi... Bizim dizimiz 0=Pazartesi başlıyor
+      const dayIndex = now.getDay() === 0 ? 6 : now.getDay() - 1;
+      const currentDay = DAYS[dayIndex];
       const currentTime = now.toTimeString().slice(0, 5);
       
       schedule.forEach(item => {
         if (item.day === currentDay && item.time === currentTime) {
-          const triggerKey = `${item.id}-${currentTime}`;
+          const triggerKey = `${item.id}-${currentTime}-${now.getDate()}`; // Günde bir kez tetiklensin
           
           if (systemState.lastTriggeredBell !== triggerKey) {
-            if (!isPlayingQueueRef.current) {
+            if (!isPlayingQueueRef.current && stationAudioRef.current) {
                 stationAudioRef.current.src = item.soundUrl;
                 stationAudioRef.current.onended = null; 
                 stationAudioRef.current.volume = (systemState.volume || 50) / 100;
@@ -248,7 +268,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, user]);
 
-  // --- ANONS FONKSİYONLARI ---
+  // --- ANONS FONKSİYONLARI (TELSİZ MODU - SINGLE BLOB) ---
   const toggleBroadcast = async () => {
       if (isBroadcasting) stopBroadcast();
       else startBroadcast();
@@ -257,29 +277,71 @@ export default function App() {
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          mediaRecorderRef.current = new MediaRecorder(stream);
           
-          mediaRecorderRef.current.ondataavailable = async (e) => {
+          let options = {};
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = { mimeType: 'audio/webm;codecs=opus' };
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+          }
+
+          mediaRecorderRef.current = new MediaRecorder(stream, options);
+          audioChunksRef.current = []; // Buffer'ı temizle
+
+          mediaRecorderRef.current.ondataavailable = (e) => {
               if (e.data.size > 0) {
-                  setIsUploadingChunk(true);
-                  const reader = new FileReader();
-                  reader.readAsDataURL(e.data);
-                  reader.onloadend = async () => {
-                      try {
-                          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), {
-                              url: reader.result,
-                              createdAt: Date.now(),
-                              user: profileName
-                          });
-                      } catch (err) { console.error("Stream Err", err); } 
-                      finally { setIsUploadingChunk(false); }
-                  };
+                  audioChunksRef.current.push(e.data);
               }
           };
 
-          mediaRecorderRef.current.start(1000); 
+          mediaRecorderRef.current.onstop = async () => {
+             // Kayıt bittiğinde tüm parçaları birleştirip TEK SEFERDE gönder
+             if (audioChunksRef.current.length > 0) {
+                 setIsUploadingChunk(true);
+                 setStatusMsg("Ses gönderiliyor...");
+                 
+                 const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType || 'audio/webm' });
+                 const reader = new FileReader();
+                 
+                 reader.onloadend = async () => {
+                     try {
+                         // Boyut kontrolü (Max 2MB güvenli)
+                         if (audioBlob.size > 2 * 1024 * 1024) {
+                             setStatusMsg("Hata: Ses dosyası çok büyük!");
+                             return;
+                         }
+
+                         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), {
+                             url: reader.result,
+                             createdAt: Date.now(),
+                             user: profileName
+                         });
+                         setStatusMsg("Anons İletildi!");
+                     } catch (err) {
+                         console.error("Upload Error", err);
+                         setStatusMsg("Gönderim Hatası!");
+                     } finally {
+                         setIsUploadingChunk(false);
+                         setTimeout(() => setStatusMsg(''), 2000);
+                     }
+                 };
+                 reader.readAsDataURL(audioBlob);
+             }
+          };
+
+          mediaRecorderRef.current.start(); 
           setIsBroadcasting(true);
-          setStatusMsg("Canlı Yayın Başladı...");
+          setStatusMsg("KAYITTA - Konuşun (Max 60sn)");
+
+          // Maksimum süre güvenliği (60 Saniye)
+          if(autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+          autoStopTimerRef.current = setTimeout(() => {
+              if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                  stopBroadcast();
+                  setStatusMsg("Süre doldu, gönderiliyor...");
+              }
+          }, 60000); 
+
       } catch (err) {
           console.error("Mic Error", err);
           setStatusMsg("Mikrofon izni verilemedi!");
@@ -287,17 +349,18 @@ export default function App() {
   };
 
   const stopBroadcast = () => {
-      if (mediaRecorderRef.current) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
           mediaRecorderRef.current.stop();
           mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
       }
+      if(autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
       setIsBroadcasting(false);
-      setStatusMsg("Yayın Bitti.");
-      setTimeout(() => setStatusMsg(''), 2000);
   };
 
   // --- YARDIMCI FONKSİYONLAR ---
   const handleSoundPreview = (id, url) => {
+      if (!previewAudioRef.current) return;
+
       if (playingSoundId === id) {
           previewAudioRef.current.pause();
           previewAudioRef.current.currentTime = 0;
@@ -520,7 +583,7 @@ export default function App() {
                     </div>
                 )}
                 {copyModal.open && (
-                     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
                         <div className="bg-slate-900 border border-slate-700 p-6 rounded-3xl w-full max-w-sm shadow-2xl">
                             <div className="flex justify-between items-center mb-6"><h3 className="font-bold text-lg text-white flex items-center gap-2"><Copy size={20} className="text-blue-500"/> Kopyala</h3><button onClick={() => setCopyModal({ open: false, type: 'day', sourceData: null })} className="p-2 bg-slate-800 rounded-full text-slate-400"><X size={20}/></button></div>
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 mb-6"><div className="text-[10px] font-bold text-slate-500 uppercase mb-1">Kaynak</div><div className="font-bold text-white">{copyModal.type === 'day' ? `${copyModal.sourceData} Günü` : `${copyModal.sourceData.time} - ${copyModal.sourceData.label}`}</div></div>
@@ -596,7 +659,6 @@ export default function App() {
       </nav>
       {isStation && <div className="fixed bottom-24 right-6 bg-emerald-600 text-white p-4 rounded-3xl shadow-2xl flex items-center gap-4 z-50 animate-bounce"><Monitor size={24} /><div className="pr-4"><div className="font-black text-sm uppercase leading-none">İSTASYON MODU</div><div className="text-[10px] opacity-80 font-bold">Ses çıkışı aktif</div></div></div>}
       
-      {/* Versiyon Göstergesi */}
       <div className="fixed bottom-2 left-2 text-[9px] text-slate-700 font-mono">v{VERSION}</div>
     </div>
   );
