@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, doc, setDoc, onSnapshot, updateDoc, 
-  collection, addDoc, deleteDoc, arrayUnion, arrayRemove, query, orderBy, limit, getDocs, where
+  collection, addDoc, deleteDoc, arrayUnion, arrayRemove, query, orderBy, getDocs
 } from 'firebase/firestore';
 import { 
   getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.17.59"; // Gün.Ay.Saat.Dakika
+const VERSION = "19.01.18.15"; // Gün.Ay.Saat.Dakika
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -39,46 +39,49 @@ const DEFAULT_SOUNDS = [
 ];
 
 export default function App() {
+  // --- STATE TANIMLARI ---
   const [user, setUser] = useState(null);
-  const [profileName, setProfileName] = useState(localStorage.getItem('bell_profile_name') || '');
-  const [isStation, setIsStation] = useState(localStorage.getItem('bell_is_station') === 'true');
+  const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
+  const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
   const [activeTab, setActiveTab] = useState('control'); 
   const [isIOS, setIsIOS] = useState(false);
   
   const [systemState, setSystemState] = useState({
     volume: 50,
     stopSignal: 0,
-    activeBroadcastUser: null 
+    activeControllerId: null,
+    activeControllerName: '',
+    announcementUrl: null,
+    lastTriggeredBell: null
   });
 
   const [schedule, setSchedule] = useState([]);
   const [customSounds, setCustomSounds] = useState([]);
   const [allowedUsers, setAllowedUsers] = useState([]);
   
-  // Anons State
+  // UI State
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isUploadingChunk, setIsUploadingChunk] = useState(false);
-  
-  // UI State
   const [statusMsg, setStatusMsg] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [isSavingSchedule, setIsSavingSchedule] = useState(false); // Kayıt donma koruması
-  const [playingSoundId, setPlayingSoundId] = useState(null); // Çalan ses ID
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [playingSoundId, setPlayingSoundId] = useState(null);
 
   // Modals
   const [scheduleModal, setScheduleModal] = useState({ open: false, mode: 'add', data: null, day: null });
   const [copyModal, setCopyModal] = useState({ open: false, type: 'day', sourceData: null });
   const [passwordModal, setPasswordModal] = useState(false);
   
-  // Refs
+  // Refs (Bellek Yönetimi İçin)
   const stationAudioRef = useRef(new Audio()); 
   const previewAudioRef = useRef(new Audio());
   const mediaRecorderRef = useRef(null);
-  const audioQueueRef = useRef([]); // Anons kuyruğu
+  const audioQueueRef = useRef([]); 
   const isPlayingQueueRef = useRef(false);
 
-  // --- 1. Stil ve Başlangıç ---
+  // --- 1. BAŞLANGIÇ AYARLARI ---
   useEffect(() => {
+    // Tailwind CSS Kontrolü
     if (!document.getElementById('tailwind-script')) {
       const script = document.createElement('script');
       script.id = 'tailwind-script';
@@ -86,48 +89,68 @@ export default function App() {
       script.async = true;
       document.head.appendChild(script);
     }
+    
+    // iOS Kontrolü
     const userAgent = window.navigator.userAgent.toLowerCase();
     setIsIOS(/iphone|ipad|ipod/.test(userAgent));
+
+    // Audio Error Handling
+    stationAudioRef.current.onerror = (e) => console.warn("Audio Error:", e);
+    previewAudioRef.current.onerror = (e) => console.warn("Preview Error:", e);
+    
+    // Cleanup
+    return () => {
+        if(stationAudioRef.current) stationAudioRef.current.pause();
+        if(previewAudioRef.current) previewAudioRef.current.pause();
+    };
   }, []);
 
-  // --- 2. Auth ---
+  // --- 2. AUTHENTICATION ---
   useEffect(() => {
     const initAuth = async () => {
       try {
         await signInAnonymously(auth);
-      } catch (err) { console.error("Auth error:", err); setStatusMsg("Bağlantı Hatası!"); }
+      } catch (err) { 
+          console.error("Auth error:", err); 
+          setStatusMsg("Bağlantı Hatası: Lütfen sayfayı yenileyin."); 
+      }
     };
     initAuth();
     return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // --- 3. Veri Senkronizasyonu ---
+  // --- 3. VERİ SENKRONİZASYONU ---
   useEffect(() => {
     if (!user) return;
 
-    // Ayarlar
+    // Ayarlar Dinleyicisi
     const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'system_meta', 'settings');
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (isStation && stationAudioRef.current) {
+        
+        // İSTASYON MODU SES İŞLEMLERİ
+        if (isStation) {
             // Ses Seviyesi
-            if (data.volume !== undefined) stationAudioRef.current.volume = data.volume / 100;
+            if (data.volume !== undefined && stationAudioRef.current) {
+                stationAudioRef.current.volume = Math.max(0, Math.min(1, data.volume / 100));
+            }
             // Acil Durdurma
             if (data.stopSignal && data.stopSignal !== systemState.stopSignal) {
                 stationAudioRef.current.pause();
                 stationAudioRef.current.currentTime = 0;
-                audioQueueRef.current = []; // Kuyruğu temizle
-                setIsPlayingQueueRef.current = false;
+                audioQueueRef.current = [];
+                isPlayingQueueRef.current = false;
             }
         }
         setSystemState(prev => ({ ...prev, ...data }));
       } else {
-        setDoc(settingsRef, { volume: 50, stopSignal: 0 });
+        // Varsayılan Ayarları Oluştur
+        setDoc(settingsRef, { volume: 50, stopSignal: 0, activeControllerId: null });
       }
     });
 
-    // Canlı Yayın (Anons) Dinleme - Sadece İSTASYON
+    // Canlı Yayın Dinleyicisi (Sadece İstasyon)
     let unsubLiveStream = () => {};
     if (isStation) {
         const streamQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), orderBy('createdAt', 'asc'));
@@ -135,19 +158,21 @@ export default function App() {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
-                    // Sadece son 15 saniye içindeki sesleri çal (Eski kayıtları yoksay)
+                    // 15 saniye kuralı: Çok eski paketleri çalma
                     if (Date.now() - audioData.createdAt < 15000) {
                         playAudioChunk(audioData.url);
                     }
-                    // Okunan parçayı veritabanından sil (Temizlik)
-                    deleteDoc(change.doc.ref).catch(e => console.log("Cleanup err", e));
+                    // Okunan paketi sil
+                    deleteDoc(change.doc.ref).catch(() => {});
                 }
             });
         });
     }
 
-    // Diğer veriler
-    const unsubUsers = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'system_meta', 'users'), (s) => setAllowedUsers(s.exists() ? s.data().list || [] : []));
+    // Diğer Veriler
+    const unsubUsers = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'system_meta', 'users'), 
+        (s) => setAllowedUsers(s.exists() ? s.data().list || [] : [])
+    );
     const unsubSchedule = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'schedule'), (s) => {
         const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setSchedule(items);
     });
@@ -162,9 +187,9 @@ export default function App() {
         unsubSchedule();
         unsubSounds();
     };
-  }, [user, isStation, systemState.stopSignal]);
+  }, [user, isStation, systemState.stopSignal, systemState.announcementUrl]);
 
-  // --- İSTASYON: Ses Kuyruğu Mantığı (Kesintisiz Çalma) ---
+  // --- SES İŞLEME MANTIĞI ---
   const playAudioChunk = (base64Url) => {
       audioQueueRef.current.push(base64Url);
       processAudioQueue();
@@ -179,18 +204,19 @@ export default function App() {
       stationAudioRef.current.src = nextChunk;
       stationAudioRef.current.onended = () => {
           isPlayingQueueRef.current = false;
-          processAudioQueue(); // Sonraki parçaya geç
+          processAudioQueue();
       };
       stationAudioRef.current.play().catch(e => {
-          console.error("Play error", e);
+          console.warn("Oynatma hatası (kullanıcı etkileşimi gerekebilir):", e);
           isPlayingQueueRef.current = false;
           processAudioQueue();
       });
   };
 
-  // --- İSTASYON: Zamanlayıcı (Zil) ---
+  // --- ZAMANLAYICI (ZİL ÇALMA) ---
   useEffect(() => {
     if (!isStation || !user) return;
+    
     const interval = setInterval(() => {
       const now = new Date();
       const currentDay = DAYS[now.getDay() === 0 ? 6 : now.getDay() - 1];
@@ -199,36 +225,34 @@ export default function App() {
       schedule.forEach(item => {
         if (item.day === currentDay && item.time === currentTime) {
           const triggerKey = `${item.id}-${currentTime}`;
+          
           if (systemState.lastTriggeredBell !== triggerKey) {
             // Anons yoksa çal
             if (!isPlayingQueueRef.current) {
                 stationAudioRef.current.src = item.soundUrl;
                 stationAudioRef.current.onended = null; 
-                stationAudioRef.current.volume = systemState.volume / 100;
-                stationAudioRef.current.play().catch(e => console.error("Zil Hata", e));
+                stationAudioRef.current.volume = (systemState.volume || 50) / 100;
+                stationAudioRef.current.play().catch(e => console.error("Zil Çalma Hatası", e));
             }
-            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'system_meta', 'settings'), { lastTriggeredBell: triggerKey });
+            // Tetiklendi olarak işaretle
+            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'system_meta', 'settings'), { lastTriggeredBell: triggerKey }).catch(()=>{});
           }
         }
       });
-    }, 4000);
+    }, 4000); // 4 saniyede bir kontrol
+
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, user]);
 
-  // --- ANONS SİSTEMİ (PARÇALI İLETİM - CANLI) ---
+  // --- ANONS FONKSİYONLARI ---
   const toggleBroadcast = async () => {
-      if (isBroadcasting) {
-          stopBroadcast();
-      } else {
-          startBroadcast();
-      }
+      if (isBroadcasting) stopBroadcast();
+      else startBroadcast();
   };
 
   const startBroadcast = async () => {
-      // DÜZELTME: Kilit kontrolü KALDIRILDI.
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          // Her 1 saniyede bir parça yolla (Gecikmeyi azaltmak için 1000ms)
           mediaRecorderRef.current = new MediaRecorder(stream);
           
           mediaRecorderRef.current.ondataavailable = async (e) => {
@@ -238,26 +262,22 @@ export default function App() {
                   reader.readAsDataURL(e.data);
                   reader.onloadend = async () => {
                       try {
-                          // Parçayı canlı yayın koleksiyonuna at
                           await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), {
                               url: reader.result,
                               createdAt: Date.now(),
                               user: profileName
                           });
-                      } catch (err) {
-                          console.error("Chunk send error", err);
-                      } finally {
-                          setIsUploadingChunk(false);
-                      }
+                      } catch (err) { console.error("Stream Err", err); } 
+                      finally { setIsUploadingChunk(false); }
                   };
               }
           };
 
-          mediaRecorderRef.current.start(1000); // 1 saniyelik parçalar
+          mediaRecorderRef.current.start(1000); // 1sn'lik paketler
           setIsBroadcasting(true);
-          setStatusMsg("Canlı Yayın (Konuşun)...");
+          setStatusMsg("Canlı Yayın Başladı...");
       } catch (err) {
-          console.error("Mic error", err);
+          console.error("Mic Error", err);
           setStatusMsg("Mikrofon izni verilemedi!");
       }
   };
@@ -272,25 +292,18 @@ export default function App() {
       setTimeout(() => setStatusMsg(''), 2000);
   };
 
-  // --- İŞLEVLER ---
-
+  // --- YARDIMCI FONKSİYONLAR ---
   const handleSoundPreview = (id, url) => {
-      // Eğer tıklanan ses zaten çalıyorsa durdur
       if (playingSoundId === id) {
           previewAudioRef.current.pause();
           previewAudioRef.current.currentTime = 0;
           setPlayingSoundId(null);
       } else {
-          // Başka bir ses çalıyorsa veya hiç çalmıyorsa yenisini çal
           previewAudioRef.current.src = url;
           previewAudioRef.current.volume = 1.0;
-          previewAudioRef.current.play();
+          previewAudioRef.current.play().catch(e => console.warn("Preview Err", e));
           setPlayingSoundId(id);
-          
-          // Ses bitince butonu normale döndür
-          previewAudioRef.current.onended = () => {
-              setPlayingSoundId(null);
-          };
+          previewAudioRef.current.onended = () => setPlayingSoundId(null);
       }
   };
 
@@ -314,22 +327,17 @@ export default function App() {
 
   const handleAddSchedule = async (e) => {
       e.preventDefault();
-      if (isSavingSchedule) return; // Çift tıklama koruması
+      if (isSavingSchedule) return;
       setIsSavingSchedule(true);
 
       const fd = new FormData(e.target);
       const time = fd.get('time');
       const day = scheduleModal.day;
       
-      // Çift Kayıt Kontrolü
-      const isDuplicate = schedule.some(s => 
-          s.day === day && 
-          s.time === time && 
-          (!scheduleModal.data || s.id !== scheduleModal.data.id)
-      );
+      const isDuplicate = schedule.some(s => s.day === day && s.time === time && (!scheduleModal.data || s.id !== scheduleModal.data.id));
 
       if (isDuplicate) {
-          setStatusMsg("Hata: Bu gün ve saatte zaten bir zil var!");
+          setStatusMsg("Bu saatte zaten zil var!");
           setIsSavingSchedule(false);
           return;
       }
@@ -353,7 +361,6 @@ export default function App() {
           setStatusMsg("Kayıt başarısız.");
       } finally {
           setIsSavingSchedule(false);
-          // 2 saniye sonra mesajı temizle
           setTimeout(() => setStatusMsg(''), 2000);
       }
   };
@@ -379,13 +386,6 @@ export default function App() {
       setTimeout(() => setStatusMsg(''), 3000);
   };
 
-  const handleStationLogin = (e) => {
-      e.preventDefault();
-      if (e.target.password.value === '1453') {
-          setIsStation(true); setProfileName('Terminal'); localStorage.setItem('bell_is_station', 'true'); setPasswordModal(false);
-      } else { alert("Hatalı şifre!"); }
-  };
-
   const handleLogin = (e) => {
       if (e.key === 'Enter') {
           const name = e.target.value.trim();
@@ -393,6 +393,13 @@ export default function App() {
               setProfileName(name); localStorage.setItem('bell_profile_name', name);
           } else setLoginError('Kullanıcı bulunamadı.');
       }
+  };
+
+  const handleStationLogin = (e) => {
+      e.preventDefault();
+      if (e.target.password.value === '1453') {
+          setIsStation(true); setProfileName('Terminal'); localStorage.setItem('bell_is_station', 'true'); setPasswordModal(false);
+      } else { alert("Hatalı şifre!"); }
   };
 
   const handleResetApp = () => { if(window.confirm("Çıkış yapılsın mı?")) { localStorage.clear(); window.location.reload(); } };
@@ -413,9 +420,10 @@ export default function App() {
       </div>
   );
 
+  // --- GİRİŞ EKRANI ---
   if (!profileName && !isStation) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6 relative">
         {passwordModal && (
             <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
                 <form onSubmit={handleStationLogin} className="bg-slate-900 p-8 rounded-3xl w-full max-w-sm text-center border border-slate-700">
@@ -441,8 +449,9 @@ export default function App() {
     );
   }
 
+  // --- ANA UYGULAMA ---
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
       <header className="bg-slate-900/50 backdrop-blur-xl border-b border-slate-800 p-4 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
@@ -470,7 +479,11 @@ export default function App() {
                 <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl flex flex-col justify-between">
                     <div>
                         <div className="flex justify-between mb-8"><h2 className="text-xs font-black uppercase text-slate-500 flex gap-2"><Volume2 size={16}/> Ses</h2><span className="text-3xl font-mono font-bold text-blue-500">{systemState.volume}%</span></div>
-                        <input type="range" min="0" max="100" value={systemState.volume} onChange={(e)=>{const v=parseInt(e.target.value); setSystemState(p=>({...p, volume:v}));}} onMouseUp={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','settings'),{volume:systemState.volume})} onTouchEnd={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','settings'),{volume:systemState.volume})} className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500 mb-6"/>
+                        <input type="range" min="0" max="100" value={systemState.volume} 
+                            onChange={(e)=>{const v=parseInt(e.target.value); setSystemState(p=>({...p, volume:v}));}} 
+                            onMouseUp={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','settings'),{volume:systemState.volume})} 
+                            onTouchEnd={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','settings'),{volume:systemState.volume})} 
+                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500 mb-6"/>
                     </div>
                     <button onClick={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','settings'),{stopSignal:Date.now()})} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
                 </div>
