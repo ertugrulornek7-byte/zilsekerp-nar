@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.17.00"; // Gün.Ay.Saat.Dakika
+const VERSION = "19.01.17.53"; // Gün.Ay.Saat.Dakika
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -415,7 +415,7 @@ export default function App() {
 
   if (!profileName && !isStation) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6 relative">
         {passwordModal && (
             <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
                 <form onSubmit={handleStationLogin} className="bg-slate-900 p-8 rounded-3xl w-full max-w-sm text-center border border-slate-700">
@@ -436,7 +436,7 @@ export default function App() {
              <button onClick={handleResetApp} className="flex items-center justify-center gap-2 text-xs font-black uppercase text-slate-600 hover:text-red-500"><RefreshCw size={14}/> Sıfırla</button>
           </div>
         </div>
-        <div className="absolute bottom-4 right-4 text-xs text-slate-600 font-mono opacity-50">v{VERSION}</div>
+        <div className="absolute bottom-4 text-[9px] text-slate-600 font-mono opacity-50">v{VERSION}</div>
       </div>
     );
   }
