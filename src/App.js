@@ -12,6 +12,9 @@ import {
   Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Save, Copy, ArrowRight, LogOut, RefreshCw, AlertTriangle, Share, Loader2
 } from 'lucide-react';
 
+// --- VERSİYON NUMARASI ---
+const VERSION = "19.01.17.00"; // Gün.Ay.Saat.Dakika
+
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
   apiKey: "AIzaSyAalfjc7mtPjbdJloBl1KjjPrITQCWEYWs",
@@ -222,7 +225,7 @@ export default function App() {
   };
 
   const startBroadcast = async () => {
-      // Kilit kontrolü KALDIRILDI. Herkes konuşabilir.
+      // DÜZELTME: Kilit kontrolü KALDIRILDI.
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           // Her 1 saniyede bir parça yolla (Gecikmeyi azaltmak için 1000ms)
@@ -433,12 +436,13 @@ export default function App() {
              <button onClick={handleResetApp} className="flex items-center justify-center gap-2 text-xs font-black uppercase text-slate-600 hover:text-red-500"><RefreshCw size={14}/> Sıfırla</button>
           </div>
         </div>
+        <div className="absolute bottom-4 right-4 text-xs text-slate-600 font-mono opacity-50">v{VERSION}</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
       <header className="bg-slate-900/50 backdrop-blur-xl border-b border-slate-800 p-4 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
@@ -575,6 +579,9 @@ export default function App() {
           {isStation && <button onClick={() => setActiveTab('users')} className={`flex flex-col items-center gap-1 ${activeTab === 'users' ? 'text-emerald-500' : 'text-slate-500'}`}><Users size={24} /><span className="text-[9px] font-black uppercase">ÜYELER</span></button>}
       </nav>
       {isStation && <div className="fixed bottom-24 right-6 bg-emerald-600 text-white p-4 rounded-3xl shadow-2xl flex items-center gap-4 z-50 animate-bounce"><Monitor size={24} /><div className="pr-4"><div className="font-black text-sm uppercase leading-none">İSTASYON MODU</div><div className="text-[10px] opacity-80 font-bold">Ses çıkışı aktif</div></div></div>}
+      
+      {/* Versiyon Göstergesi */}
+      <div className="fixed bottom-2 left-2 text-[9px] text-slate-700 font-mono">v{VERSION}</div>
     </div>
   );
 }
