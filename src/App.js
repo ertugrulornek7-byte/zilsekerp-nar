@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.20.99"; // Build Fix (Unused 'Power' Removed)
+const VERSION = "19.01.20.100"; // v19.01.20.16 Ses Motoruna Dönüş (Stable)
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -184,13 +184,12 @@ export default function App() {
   const [scheduleModal, setScheduleModal] = useState({ open: false, mode: 'add', data: null, day: null });
   const [copyModal, setCopyModal] = useState({ open: false, type: 'day', sourceData: null });
 
-  // Refs
-  const stationAudioRef = useRef(null); 
-  const previewAudioRef = useRef(null);
+  // Refs - v19.01.20.16'ya dönüş
+  const stationAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null); 
+  const previewAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null);
   const mediaRecorderRef = useRef(null);
   const audioQueueRef = useRef([]); 
   const isPlayingQueueRef = useRef(false);
-  const autoStopTimerRef = useRef(null);
   const audioChunksRef = useRef([]);
   
   const lastStopSignalRef = useRef(0);
@@ -204,6 +203,10 @@ export default function App() {
         script.async = true;
         document.head.appendChild(script);
      }
+
+     // Audio Init - v16 mantığı
+     if(stationAudioRef.current) stationAudioRef.current.onerror = (e) => console.warn("Audio Error:", e);
+     if(previewAudioRef.current) previewAudioRef.current.onerror = (e) => console.warn("Preview Error:", e);
 
      const initAuth = async () => {
         try {
@@ -219,9 +222,14 @@ export default function App() {
         }
      };
      initAuth();
+
+     return () => {
+         if(stationAudioRef.current) stationAudioRef.current.pause();
+         if(previewAudioRef.current) previewAudioRef.current.pause();
+     };
   }, []);
 
-  // --- SES İŞLEME MANTIĞI ---
+  // --- SES İŞLEME MANTIĞI (v16'ya DÖNÜŞ) ---
   const processAudioQueue = useCallback(() => {
       const audioEl = stationAudioRef.current;
       if (!audioEl || isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
@@ -229,32 +237,17 @@ export default function App() {
       isPlayingQueueRef.current = true;
       const nextChunk = audioQueueRef.current.shift();
       
-      try {
-          audioEl.src = nextChunk;
-          audioEl.load(); 
-          audioEl.volume = (systemState.volume || 50) / 100;
-          
-          const playPromise = audioEl.play();
-          if (playPromise !== undefined) {
-              playPromise.then(() => {
-                  // Başarılı
-              }).catch(e => {
-                  console.warn("Otomatik Oynatma Engellendi:", e); 
-                  isPlayingQueueRef.current = false; 
-                  setTimeout(processAudioQueue, 500); // Tekrar dene
-              });
-          }
-          
-          audioEl.onended = () => { 
-              isPlayingQueueRef.current = false; 
-              processAudioQueue(); 
-          };
-      } catch (err) {
-          console.error("Audio Source Error", err);
-          isPlayingQueueRef.current = false;
-          processAudioQueue();
-      }
-  }, [systemState.volume]);
+      audioEl.src = nextChunk;
+      audioEl.onended = () => { 
+          isPlayingQueueRef.current = false; 
+          processAudioQueue(); 
+      };
+      audioEl.play().catch(e => { 
+          console.warn("Oynatma hatası:", e); 
+          isPlayingQueueRef.current = false; 
+          processAudioQueue(); 
+      });
+  }, []);
   
   const playAudioChunk = useCallback((base64Url) => { 
       audioQueueRef.current.push(base64Url); 
@@ -274,7 +267,7 @@ export default function App() {
             if (data.volume !== undefined) stationAudioRef.current.volume = Math.max(0, Math.min(1, data.volume / 100));
             
             if (data.stopSignal && data.stopSignal !== lastStopSignalRef.current) {
-                console.log("Stop Signal Detected:", data.stopSignal);
+                console.log("Stop Signal:", data.stopSignal);
                 stationAudioRef.current.pause(); 
                 stationAudioRef.current.currentTime = 0; 
                 audioQueueRef.current = []; 
@@ -303,7 +296,7 @@ export default function App() {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
-                    if (Date.now() - audioData.createdAt < 60000) { 
+                    if (Date.now() - audioData.createdAt < 60000) { // 1 dk tolerans
                         playAudioChunk(audioData.url);
                     }
                     deleteDoc(change.doc.ref).catch(() => {});
@@ -342,40 +335,35 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- TELSİZ MODU (ESKİ SÜRÜME DÖNÜLDÜ) ---
+  // --- TELSİZ MODU (v16 MANTIĞI) ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
   
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          
-          let options = {};
-          // ESKİ VERSİYON MANTIĞI: Codec'leri açıkça belirt
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            options = { mimeType: 'audio/webm;codecs=opus' };
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            options = { mimeType: 'audio/mp4' };
-          }
-
-          mediaRecorderRef.current = new MediaRecorder(stream, options);
+          // v16'daki gibi options olmadan, sade başlatma
+          mediaRecorderRef.current = new MediaRecorder(stream);
           audioChunksRef.current = [];
           
-          mediaRecorderRef.current.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+          mediaRecorderRef.current.ondataavailable = (e) => { 
+              if (e.data.size > 0) audioChunksRef.current.push(e.data); 
+          };
           
           mediaRecorderRef.current.onstop = async () => {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
                  
-                 // ESKİ VERSİYON: Seçilen options'ı kullan
-                 const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType || 'audio/webm' });
+                 const reader = new FileReader();
+                 // Sade Blob oluşturma
+                 const audioBlob = new Blob(audioChunksRef.current);
                  
-                 if (audioBlob.size > 800 * 1024) {
+                 // Boyut kontrolünü biraz esnettim
+                 if (audioBlob.size > 2 * 1024 * 1024) {
                      setIsUploadingChunk(false);
-                     setStatusMsg("HATA: Kayıt çok uzun!");
+                     setStatusMsg("HATA: Kayıt çok büyük!");
                      return;
                  }
 
-                 const reader = new FileReader();
                  reader.onloadend = async () => {
                      try {
                          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), {
@@ -393,8 +381,8 @@ export default function App() {
           setIsBroadcasting(true); 
           setStatusMsg("KAYITTA - Konuşun");
           
-          if(autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-          autoStopTimerRef.current = setTimeout(() => { 
+          // Güvenlik zamanlayıcısı (v16'da yoktu ama güvenlik için tutuyoruz)
+          setTimeout(() => { 
               if (mediaRecorderRef.current?.state === 'recording') stopBroadcast(); 
           }, 60000); 
           
@@ -543,7 +531,7 @@ export default function App() {
                      </select>
                      <button className="bg-blue-600 px-6 rounded-xl font-bold hover:bg-blue-500"><ArrowRight/></button>
                  </div>
-                 {/* HATA MESAJI BURAYA EKLENDİ */}
+                 {/* HATA MESAJI */}
                  {loginError && <div className="text-red-500 text-xs font-bold mt-2 ml-2">{loginError}</div>}
              </div>
           </form>
@@ -567,10 +555,6 @@ export default function App() {
   // --- ANA EKRAN ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
-      {/* Gizli Audio Elementleri - Geri Eklendi */}
-      <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
-      <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
-
       <header className="bg-slate-900/50 backdrop-blur-xl border-b border-slate-800 p-4 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
@@ -606,7 +590,7 @@ export default function App() {
                         <input type="range" min="0" max="100" value={systemState.volume} onChange={(e)=>{const v=parseInt(e.target.value); setSystemState(p=>({...p, volume:v}));}} onMouseUp={()=>updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{volume:systemState.volume})} onTouchEnd={()=>updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{volume:systemState.volume})} className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500 mb-6"/>
                     </div>
                     
-                    {/* TERMINAL ŞİFRESİ DEĞİŞTİRME (Sadece Terminal Modunda) */}
+                    {/* TERMINAL ŞİFRESİ DEĞİŞTİRME */}
                     {isStation && (
                         <div className="mb-4 p-4 bg-slate-950 rounded-xl border border-emerald-900/30">
                              <div className="flex justify-between items-center"><span className="text-xs font-bold text-emerald-500 flex items-center gap-2"><Settings size={14}/> Terminal Şifresi</span><button className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold" onClick={async()=>{ const newPass = prompt("Yeni Terminal Şifresi Girin:", systemState.terminalPassword); if(newPass) await updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{terminalPassword: newPass}); }}>Değiştir</button></div>
@@ -614,7 +598,6 @@ export default function App() {
                     )}
                     
                     <button onClick={()=>{
-                        // Ses Kesme Butonu (TimeStamp göndererek tetikler)
                         updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{stopSignal:Date.now()});
                     }} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
                 </div>
