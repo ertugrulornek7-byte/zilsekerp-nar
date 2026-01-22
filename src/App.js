@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.49"; // Debug Modu: Anons Takibi & Temizlik
+const VERSION = "22.01.16.50"; // Firestore 1MB Limiti Fix & Debug Mesajları
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -185,9 +185,10 @@ export default function App() {
   const [copyModal, setCopyModal] = useState({ open: false, type: 'day', sourceData: null });
 
   // Refs
-  const stationAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null); 
-  const bellAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null); 
-  const previewAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null);
+  // DOM elementlerine bağlanmak için useRef(null) kullanıyoruz
+  const stationAudioRef = useRef(null); 
+  const bellAudioRef = useRef(null); 
+  const previewAudioRef = useRef(null);
   
   const mediaRecorderRef = useRef(null);
   const audioQueueRef = useRef([]); 
@@ -228,13 +229,7 @@ export default function App() {
         }
      };
      initAuth();
-
-     return () => {
-         if(stationAudio) stationAudio.pause();
-         if(bellAudio) bellAudio.pause();
-         if(previewAudio) previewAudio.pause();
-     };
-  }, []);
+  }, []); // Bağımlılık dizisi boş kalsın
 
   // --- SES İŞLEME MANTIĞI (ANONSLAR İÇİN) ---
   const processAudioQueue = useCallback(() => {
@@ -247,6 +242,8 @@ export default function App() {
       console.log("Ses parçası işleniyor...");
 
       audioEl.src = nextChunk;
+      audioEl.load(); // YENİ: Yüklemeyi zorla
+      
       audioEl.onended = () => { 
           console.log("Ses parçası bitti.");
           isPlayingQueueRef.current = false; 
@@ -256,13 +253,11 @@ export default function App() {
       audioEl.play().then(() => {
           console.log("Ses başarıyla çalıyor.");
           setStatusMsg("🔊 ANONS ÇALINIYOR...");
-          // 5 saniye sonra mesajı temizle
           setTimeout(() => setStatusMsg(''), 5000);
       }).catch(e => { 
           console.error("Oynatma Hatası:", e); 
           isPlayingQueueRef.current = false; 
-          // Hata mesajını ekrana bas, kullanıcı görsün
-          setStatusMsg(`SES ÇALMA HATASI: ${e.name} - Ekrana dokunun!`);
+          setStatusMsg(`SES ÇALMA HATASI: ${e.message}`);
           processAudioQueue(); 
       });
   }, []);
@@ -325,17 +320,19 @@ export default function App() {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
-                    console.log("Firebase'den gelen veri:", audioData);
                     
-                    // --- KRİTİK EKLEME: Bildirim Ver ---
-                    setStatusMsg(`🔔 YENİ ANONS GELDİ: ${audioData.user || 'Kullanıcı'}`);
+                    // Bildirim: Verinin geldiğini kesinleştirelim
+                    setStatusMsg(`📡 VERİ ALINDI: ${audioData.user || 'Kullanıcı'}`);
+                    console.log("Canlı Yayın Verisi:", audioData);
 
-                    // Zaman kontrolünü 5 dakikaya çıkardık (Saat farkı için)
                     if (Date.now() - audioData.createdAt < 300000) { 
-                        playAudioChunk(audioData.url);
+                        if (audioData.url) {
+                            playAudioChunk(audioData.url);
+                        } else {
+                            setStatusMsg("HATA: Boş ses verisi!");
+                        }
                     } else {
-                        console.log("Anons süresi dolmuş, çalınmıyor.");
-                        setStatusMsg("Eski anons atlandı.");
+                        setStatusMsg("HATA: Eski zamanlı veri.");
                     }
                     deleteDoc(change.doc.ref).catch(() => {});
                 }
@@ -374,7 +371,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- TELSİZ MODU (MİKROFON & FORMAT FIX) ---
+  // --- TELSİZ MODU ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
   
   const startBroadcast = async () => {
@@ -409,14 +406,16 @@ export default function App() {
           
           mediaRecorderRef.current.onstop = async () => {
              if (audioChunksRef.current.length > 0) {
-                 setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
+                 setIsUploadingChunk(true); 
+                 setStatusMsg("Ses gönderiliyor...");
                  
                  const recordedMimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
                  const audioBlob = new Blob(audioChunksRef.current, { type: recordedMimeType }); 
                  
-                 if (audioBlob.size > 5 * 1024 * 1024) { 
+                 // DÜZELTME: Limit 750KB (Firestore 1MB limiti için güvenli alan)
+                 if (audioBlob.size > 750 * 1024) { 
                      setIsUploadingChunk(false);
-                     setStatusMsg("HATA: Kayıt çok büyük!");
+                     setStatusMsg("HATA: Kayıt çok uzun! (Max ~1dk)");
                      return;
                  }
 
@@ -427,8 +426,14 @@ export default function App() {
                              institutionId: institution.uid, url: reader.result, createdAt: Date.now(), user: profileName
                          });
                          setStatusMsg("Anons İletildi!");
-                     } catch (err) { console.error(err); setStatusMsg("Gönderim Hatası!"); } 
-                     finally { setIsUploadingChunk(false); setTimeout(() => setStatusMsg(''), 2000); }
+                     } catch (err) { 
+                         console.error(err); 
+                         setStatusMsg("Gönderim Hatası (Veri çok büyük olabilir)"); 
+                     } 
+                     finally { 
+                         setIsUploadingChunk(false); 
+                         setTimeout(() => setStatusMsg(''), 2000); 
+                     }
                  };
                  reader.readAsDataURL(audioBlob);
              }
@@ -610,6 +615,7 @@ export default function App() {
   // --- ANA EKRAN ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
+      {/* Gizli Audio Elementleri: Bu elementler DOM'da kalıcı olarak bulunmalı */}
       <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={bellAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
