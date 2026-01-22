@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, doc, onSnapshot, updateDoc, 
-  collection, addDoc, deleteDoc, arrayUnion, arrayRemove, query, orderBy, getDocs, where
+  collection, addDoc, deleteDoc, arrayUnion, arrayRemove, query, getDocs, where
 } from 'firebase/firestore';
 import { 
   getAuth, signInAnonymously, signInWithCustomToken 
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.52"; // Index Fix & Log Paneli
+const VERSION = "22.01.16.53"; // Build Fix: Unused Vars Removed
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -158,7 +158,7 @@ export default function App() {
   const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
   const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
   const [isAudioContextReady, setIsAudioContextReady] = useState(false);
-  const [debugLogs, setDebugLogs] = useState([]); // YENİ: Log sistemi
+  const [debugLogs, setDebugLogs] = useState([]);
 
   const [activeTab, setActiveTab] = useState('control'); 
   const [systemState, setSystemState] = useState({
@@ -215,7 +215,6 @@ export default function App() {
 
      const stationAudio = stationAudioRef.current;
      const bellAudio = bellAudioRef.current;
-     const previewAudio = previewAudioRef.current;
 
      if(stationAudio) stationAudio.onerror = (e) => addLog(`Anons Audio Hata: ${e.message}`);
      if(bellAudio) bellAudio.onerror = (e) => addLog(`Zil Audio Hata: ${e.message}`);
@@ -339,11 +338,10 @@ export default function App() {
         const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setCustomSounds(items);
     });
 
-    // CANLI YAYIN DİNLEYİCİSİ (DÜZELTİLDİ: OrderBy kaldırıldı)
+    // CANLI YAYIN DİNLEYİCİSİ
     let unsubLive = () => {};
     if (isStation) {
-        // DİKKAT: orderBy kaldırıldı, çünkü index hatasına sebep oluyordu.
-        // Sadece where ile çekiyoruz, sıralamayı ve güncelliği aşağıda kontrol ediyoruz.
+        // Index hatasını önlemek için orderBy KULLANMIYORUZ
         const q = query(
             collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), 
             where("institutionId", "==", instId)
@@ -354,8 +352,7 @@ export default function App() {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
                     
-                    // Sadece son 2 dakika içindeki verileri al
-                    const isRecent = (Date.now() - audioData.createdAt) < 120000; 
+                    const isRecent = (Date.now() - audioData.createdAt) < 120000; // 2 dk tolerans
 
                     if (isRecent) {
                         addLog(`📥 Veri İndirildi: ${audioData.user}`);
