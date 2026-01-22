@@ -9,11 +9,11 @@ import {
 } from 'firebase/auth';
 import { 
   Bell, Mic, Volume2, Users, Monitor,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power, Activity
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.51"; // Autoplay Fix & Code Cleanup
+const VERSION = "22.01.16.52"; // Index Fix & Log Paneli
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -157,7 +157,8 @@ export default function App() {
   
   const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
   const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
-  const [isAudioContextReady, setIsAudioContextReady] = useState(false); // YENİ: Ses motoru durumu
+  const [isAudioContextReady, setIsAudioContextReady] = useState(false);
+  const [debugLogs, setDebugLogs] = useState([]); // YENİ: Log sistemi
 
   const [activeTab, setActiveTab] = useState('control'); 
   const [systemState, setSystemState] = useState({
@@ -197,6 +198,11 @@ export default function App() {
   
   const lastStopSignalRef = useRef(0);
 
+  const addLog = useCallback((msg) => {
+      const time = new Date().toLocaleTimeString();
+      setDebugLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10)); // Son 10 log
+  }, []);
+
   // --- 1. FIREBASE BAŞLATMA ---
   useEffect(() => {
      if (!document.getElementById('tailwind-script')) {
@@ -211,9 +217,8 @@ export default function App() {
      const bellAudio = bellAudioRef.current;
      const previewAudio = previewAudioRef.current;
 
-     if(stationAudio) stationAudio.onerror = (e) => console.warn("Anons Audio Error:", e);
-     if(bellAudio) bellAudio.onerror = (e) => console.warn("Zil Audio Error:", e);
-     if(previewAudio) previewAudio.onerror = (e) => console.warn("Preview Error:", e);
+     if(stationAudio) stationAudio.onerror = (e) => addLog(`Anons Audio Hata: ${e.message}`);
+     if(bellAudio) bellAudio.onerror = (e) => addLog(`Zil Audio Hata: ${e.message}`);
 
      const initAuth = async () => {
         try {
@@ -223,38 +228,41 @@ export default function App() {
                 await signInAnonymously(auth);
             }
             setIsFirebaseReady(true);
+            addLog("Firebase Bağlandı.");
         } catch (error) {
             console.error("Firebase Init Error:", error);
             setStatusMsg("Bağlantı hatası!");
+            addLog("Firebase Bağlantı Hatası!");
         }
      };
      initAuth();
-  }, []);
+  }, [addLog]);
 
-  // --- SES MOTORUNU BAŞLATMA (YENİ) ---
+  // --- SES MOTORUNU BAŞLATMA ---
   const unlockAudioContext = () => {
       const station = stationAudioRef.current;
       const bell = bellAudioRef.current;
 
       if(station && bell) {
-          // Sessiz bir şekilde oynatıp durdurarak tarayıcı iznini al
           station.play().then(() => {
               station.pause();
               station.currentTime = 0;
-          }).catch(()=>{});
+              addLog("Anons Motoru Hazır");
+          }).catch((e) => addLog(`Anons Motoru Hata: ${e.name}`));
 
           bell.play().then(() => {
               bell.pause();
               bell.currentTime = 0;
-          }).catch(()=>{});
+              addLog("Zil Motoru Hazır");
+          }).catch((e) => addLog(`Zil Motoru Hata: ${e.name}`));
           
           setIsAudioContextReady(true);
-          setStatusMsg("Ses Sistemi Aktif!");
+          setStatusMsg("Sistem Hazır!");
           setTimeout(() => setStatusMsg(''), 2000);
       }
   };
 
-  // --- SES İŞLEME MANTIĞI (ANONSLAR İÇİN) ---
+  // --- SES İŞLEME MANTIĞI ---
   const processAudioQueue = useCallback(() => {
       const audioEl = stationAudioRef.current;
       if (!audioEl || isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
@@ -262,33 +270,32 @@ export default function App() {
       isPlayingQueueRef.current = true;
       const nextChunk = audioQueueRef.current.shift();
       
-      console.log("Ses işleniyor...");
+      addLog("Ses oynatılıyor...");
 
       audioEl.src = nextChunk;
       audioEl.load(); 
       
       audioEl.onended = () => { 
-          console.log("Ses bitti.");
+          addLog("Ses bitti.");
           isPlayingQueueRef.current = false; 
           processAudioQueue(); 
       };
       
       audioEl.play().then(() => {
           setStatusMsg("🔊 ANONS ÇALINIYOR...");
+          addLog("Çalma başladı.");
           setTimeout(() => setStatusMsg(''), 5000);
       }).catch(e => { 
           console.error("Oynatma Hatası:", e); 
           isPlayingQueueRef.current = false; 
-          // Eğer hata NotAllowedError ise kullanıcı etkileşimi eksiktir
+          addLog(`Çalma Hatası: ${e.name}`);
           if (e.name === 'NotAllowedError') {
-              setStatusMsg("SES İZNİ GEREKİYOR! Ekrana Dokunun.");
+              setStatusMsg("SES İZNİ YOK!");
               setIsAudioContextReady(false);
-          } else {
-              setStatusMsg(`Çalma Hatası: ${e.message}`);
           }
           processAudioQueue(); 
       });
-  }, []);
+  }, [addLog]);
   
   const playAudioChunk = useCallback((base64Url) => { 
       audioQueueRef.current.push(base64Url); 
@@ -303,7 +310,6 @@ export default function App() {
     const unsubInst = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'institutions', instId), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        
         if (isStation) {
             const vol = Math.max(0, Math.min(1, (data.volume || 50) / 100));
             if (stationAudioRef.current) stationAudioRef.current.volume = vol;
@@ -311,19 +317,11 @@ export default function App() {
             
             if (data.stopSignal && data.stopSignal !== lastStopSignalRef.current) {
                 if (lastStopSignalRef.current !== 0) {
-                    if(stationAudioRef.current) {
-                        stationAudioRef.current.pause(); 
-                        stationAudioRef.current.currentTime = 0;
-                    }
-                    if(bellAudioRef.current) {
-                        bellAudioRef.current.pause();
-                        bellAudioRef.current.currentTime = 0;
-                    }
-
+                    if(stationAudioRef.current) { stationAudioRef.current.pause(); stationAudioRef.current.currentTime = 0; }
+                    if(bellAudioRef.current) { bellAudioRef.current.pause(); bellAudioRef.current.currentTime = 0; }
                     audioQueueRef.current = []; 
                     isPlayingQueueRef.current = false;
-                    setStatusMsg("Tüm Sesler Kesildi.");
-                    setTimeout(() => setStatusMsg(''), 1500);
+                    addLog("Stop Sinyali Alındı");
                 }
                 lastStopSignalRef.current = data.stopSignal;
             }
@@ -341,30 +339,46 @@ export default function App() {
         const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setCustomSounds(items);
     });
 
-    // CANLI YAYIN DİNLEYİCİSİ
+    // CANLI YAYIN DİNLEYİCİSİ (DÜZELTİLDİ: OrderBy kaldırıldı)
     let unsubLive = () => {};
     if (isStation) {
-        unsubLive = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), where("institutionId", "==", instId), orderBy('createdAt', 'asc')), (snapshot) => {
+        // DİKKAT: orderBy kaldırıldı, çünkü index hatasına sebep oluyordu.
+        // Sadece where ile çekiyoruz, sıralamayı ve güncelliği aşağıda kontrol ediyoruz.
+        const q = query(
+            collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), 
+            where("institutionId", "==", instId)
+        );
+
+        unsubLive = onSnapshot(q, (snapshot) => {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
                     
-                    setStatusMsg(`📡 VERİ GELDİ: ${audioData.user}`);
-                    
-                    // Veri geçerliliği ve zaman kontrolü (5 dk tolerans)
-                    if (audioData.url && audioData.url.startsWith('data:audio') && Date.now() - audioData.createdAt < 300000) { 
-                        playAudioChunk(audioData.url);
-                    } else {
-                        console.warn("Veri geçersiz veya eski");
+                    // Sadece son 2 dakika içindeki verileri al
+                    const isRecent = (Date.now() - audioData.createdAt) < 120000; 
+
+                    if (isRecent) {
+                        addLog(`📥 Veri İndirildi: ${audioData.user}`);
+                        if (audioData.url) {
+                            playAudioChunk(audioData.url);
+                        } else {
+                            addLog("HATA: URL Boş");
+                        }
+                    } 
+                    // Eski verileri temizle
+                    if (Date.now() - audioData.createdAt > 300000) {
+                         deleteDoc(change.doc.ref).catch(() => {});
                     }
-                    deleteDoc(change.doc.ref).catch(() => {});
                 }
             });
+        }, (error) => {
+            addLog(`Firebase Dinleme Hatası: ${error.message}`);
+            console.error("Snapshot Error:", error);
         });
     }
 
     return () => { unsubInst(); unsubSchedule(); unsubSounds(); unsubLive(); };
-  }, [institution, isFirebaseReady, isStation, playAudioChunk]);
+  }, [institution, isFirebaseReady, isStation, playAudioChunk, addLog]);
 
   // --- ZAMANLAYICI (ZİL SESLERİ İÇİN) ---
   useEffect(() => {
@@ -379,12 +393,11 @@ export default function App() {
         if (item.day === currentDay && item.time === currentTime) {
           const triggerKey = `${item.id}-${currentTime}-${now.getDate()}`;
           if (systemState.lastTriggeredBell !== triggerKey) {
-            
             const bellAudio = bellAudioRef.current;
             if (bellAudio) {
                 bellAudio.src = item.soundUrl;
                 bellAudio.volume = (systemState.volume || 50) / 100;
-                bellAudio.play().catch(e => console.error("Zil çalma hatası:", e));
+                bellAudio.play().then(()=>addLog(`Zil Çalıyor: ${item.label}`)).catch(e => addLog(`Zil Hata: ${e.name}`));
             }
             updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'institutions', institution.uid), { lastTriggeredBell: triggerKey }).catch(()=>{});
           }
@@ -392,7 +405,7 @@ export default function App() {
       });
     }, 4000); 
     return () => clearInterval(interval);
-  }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
+  }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution, addLog]);
 
   // --- TELSİZ MODU ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
@@ -400,46 +413,28 @@ export default function App() {
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ 
-              audio: {
-                  echoCancellation: true,
-                  noiseSuppression: true,
-                  autoGainControl: true
-              } 
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
           });
           
           let options = {};
-          // En yaygın ve uyumlu formatı seç
-          if (MediaRecorder.isTypeSupported('audio/webm')) {
-              options = { mimeType: 'audio/webm' };
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-              options = { mimeType: 'audio/mp4' };
-          }
+          if (MediaRecorder.isTypeSupported('audio/webm')) options = { mimeType: 'audio/webm' };
+          else if (MediaRecorder.isTypeSupported('audio/mp4')) options = { mimeType: 'audio/mp4' };
 
-          try {
-            mediaRecorderRef.current = new MediaRecorder(stream, options);
-          } catch (e) {
-             console.warn("MediaRecorder default ayarlarla başlatılıyor.");
-             mediaRecorderRef.current = new MediaRecorder(stream); 
-          }
+          try { mediaRecorderRef.current = new MediaRecorder(stream, options); } 
+          catch (e) { mediaRecorderRef.current = new MediaRecorder(stream); }
           
           audioChunksRef.current = [];
-          
-          mediaRecorderRef.current.ondataavailable = (e) => { 
-              if (e.data.size > 0) audioChunksRef.current.push(e.data); 
-          };
+          mediaRecorderRef.current.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
           
           mediaRecorderRef.current.onstop = async () => {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); 
                  setStatusMsg("Gönderiliyor...");
-                 
-                 const recordedMimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
-                 const audioBlob = new Blob(audioChunksRef.current, { type: recordedMimeType }); 
+                 const mimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
+                 const audioBlob = new Blob(audioChunksRef.current, { type: mimeType }); 
                  
                  if (audioBlob.size > 800 * 1024) { 
-                     setIsUploadingChunk(false);
-                     setStatusMsg("HATA: Kayıt çok uzun!");
-                     return;
+                     setIsUploadingChunk(false); setStatusMsg("Çok Uzun!"); return;
                  }
 
                  const reader = new FileReader();
@@ -449,14 +444,8 @@ export default function App() {
                              institutionId: institution.uid, url: reader.result, createdAt: Date.now(), user: profileName
                          });
                          setStatusMsg("İletildi!");
-                     } catch (err) { 
-                         console.error(err); 
-                         setStatusMsg("Gönderim Hatası"); 
-                     } 
-                     finally { 
-                         setIsUploadingChunk(false); 
-                         setTimeout(() => setStatusMsg(''), 2000); 
-                     }
+                     } catch (err) { setStatusMsg("Hata!"); console.error(err); } 
+                     finally { setIsUploadingChunk(false); setTimeout(() => setStatusMsg(''), 2000); }
                  };
                  reader.readAsDataURL(audioBlob);
              }
@@ -465,15 +454,9 @@ export default function App() {
           mediaRecorderRef.current.start(); 
           setIsBroadcasting(true); 
           setStatusMsg("KAYITTA...");
+          setTimeout(() => { if (mediaRecorderRef.current?.state === 'recording') stopBroadcast(); }, 60000); 
           
-          setTimeout(() => { 
-              if (mediaRecorderRef.current?.state === 'recording') stopBroadcast(); 
-          }, 60000); 
-          
-      } catch (err) { 
-          console.error("Mikrofon Hatası:", err);
-          setStatusMsg("Mikrofon Hatası"); 
-      }
+      } catch (err) { setStatusMsg("Mikrofon Hatası"); console.error(err); }
   };
   
   const stopBroadcast = () => {
@@ -493,13 +476,12 @@ export default function App() {
 
   const handleStationLogin = (e) => {
       e.preventDefault();
-      const enteredPass = e.target.password.value;
-      if (enteredPass === systemState.terminalPassword) {
+      if (e.target.password.value === systemState.terminalPassword) {
           setIsStation(true); 
           setProfileName('Terminal'); 
           localStorage.setItem('bell_is_station', 'true'); 
           setPasswordModal(false);
-      } else { alert("Hatalı Terminal Şifresi!"); }
+      } else { alert("Hatalı Şifre!"); }
   };
 
   const handleProfileLogin = (e) => {
@@ -528,17 +510,8 @@ export default function App() {
       const time = fd.get('time');
       const day = scheduleModal.day;
       
-      const isDuplicate = schedule.some(s => 
-          s.day === day && 
-          s.time === time && 
-          (scheduleModal.mode === 'add' || (scheduleModal.mode === 'edit' && s.id !== scheduleModal.data.id))
-      );
-
-      if (isDuplicate) {
-          setStatusMsg("HATA: Bu gün ve saatte zaten bir zil var!");
-          setTimeout(() => setStatusMsg(''), 3000);
-          return;
-      }
+      const isDuplicate = schedule.some(s => s.day === day && s.time === time && (scheduleModal.mode === 'add' || (scheduleModal.mode === 'edit' && s.id !== scheduleModal.data.id)));
+      if (isDuplicate) { setStatusMsg("Zaten kayıtlı!"); setTimeout(()=>setStatusMsg(''), 2000); return; }
 
       setIsSavingSchedule(true);
       const newItem = { institutionId: institution.uid, time, label: fd.get('label'), soundUrl: (DEFAULT_SOUNDS.find(s=>s.id===fd.get('soundId')) || customSounds.find(s=>s.id===fd.get('soundId')) || DEFAULT_SOUNDS[0]).url };
@@ -555,37 +528,24 @@ export default function App() {
       const items = copyModal.type === 'day' ? schedule.filter(s => s.day === copyModal.sourceData) : [copyModal.sourceData];
       const existingTimes = schedule.filter(s => s.day === targetDay).map(s => s.time);
       for (const i of items) {
-          if (!existingTimes.includes(i.time)) {
-              await addDoc(collection(db,'artifacts',appId,'public', 'data', 'schedule'), { institutionId: institution.uid, day: targetDay, time:i.time, label:i.label, soundUrl:i.soundUrl });
-          }
+          if (!existingTimes.includes(i.time)) await addDoc(collection(db,'artifacts',appId,'public', 'data', 'schedule'), { institutionId: institution.uid, day: targetDay, time:i.time, label:i.label, soundUrl:i.soundUrl });
       }
       setCopyModal({ open: false, type: 'day', sourceData: null });
-      setStatusMsg("Kopyalama tamamlandı.");
-      setTimeout(() => setStatusMsg(''), 3000);
+      setStatusMsg("Kopyalandı.");
+      setTimeout(()=>setStatusMsg(''), 2000);
   };
 
   const handleSoundPreview = (id, url) => {
       const audio = previewAudioRef.current;
       if (!audio) return;
-
-      if (playingSoundId === id) {
-          audio.pause();
-          audio.currentTime = 0;
-          setPlayingSoundId(null);
-      } else {
-          audio.src = url;
-          audio.volume = 1.0;
-          audio.play().catch(e => console.warn("Preview Play Err:", e));
-          setPlayingSoundId(id);
-          audio.onended = () => setPlayingSoundId(null);
-      }
+      if (playingSoundId === id) { audio.pause(); audio.currentTime = 0; setPlayingSoundId(null); } 
+      else { audio.src = url; audio.volume = 1.0; audio.play(); setPlayingSoundId(id); audio.onended = () => setPlayingSoundId(null); }
   };
 
   // --- RENDER ---
   if (!isFirebaseReady) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><Loader2 className="text-blue-600 animate-spin" size={40}/></div>;
   if (!institution) return <AuthScreen onLogin={handleInstitutionLogin} />;
 
-  // Mod Seçim Ekranı
   if (!profileName && !isStation) {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6 relative">
@@ -604,7 +564,6 @@ export default function App() {
           <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-blue-900/50"><Building2 size={40} /></div>
           <h1 className="text-xl font-bold mb-1 text-slate-200">{systemState.institutionName || 'Kurum Paneli'}</h1>
           <p className="text-slate-500 mb-8 text-xs uppercase tracking-widest font-bold">Giriş Modu Seçin</p>
-          
           <form onSubmit={handleProfileLogin} className="space-y-4 mb-8">
              <div className="text-left">
                  <label className="text-xs font-bold text-slate-400 ml-2 mb-1 block">Yönetici / Kullanıcı Girişi</label>
@@ -618,17 +577,8 @@ export default function App() {
                  {loginError && <div className="text-red-500 text-xs font-bold mt-2 ml-2">{loginError}</div>}
              </div>
           </form>
-
-          <div className="relative py-4">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800"></div></div>
-              <div className="relative flex justify-center"><span className="bg-slate-900 px-4 text-xs text-slate-600 font-bold uppercase">veya</span></div>
-          </div>
-
-          <button onClick={()=>setPasswordModal(true)} className="w-full py-4 border border-slate-800 hover:border-emerald-500/50 hover:bg-emerald-900/10 rounded-xl flex items-center justify-center gap-3 text-emerald-500 font-bold transition-all group">
-              <Monitor size={20} className="group-hover:scale-110 transition-transform"/>
-              TERMİNAL MODUNA GEÇ
-          </button>
-
+          <div className="relative py-4"><div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800"></div></div><div className="relative flex justify-center"><span className="bg-slate-900 px-4 text-xs text-slate-600 font-bold uppercase">veya</span></div></div>
+          <button onClick={()=>setPasswordModal(true)} className="w-full py-4 border border-slate-800 hover:border-emerald-500/50 hover:bg-emerald-900/10 rounded-xl flex items-center justify-center gap-3 text-emerald-500 font-bold transition-all group"><Monitor size={20} className="group-hover:scale-110 transition-transform"/>TERMİNAL MODUNA GEÇ</button>
           <button onClick={()=>{ setInstitution(null); localStorage.removeItem('bell_inst_id'); localStorage.removeItem('bell_inst_name'); }} className="mt-8 text-xs font-bold text-red-500 hover:text-red-400 flex items-center justify-center gap-2 w-full"><LogOut size={12}/> KURUM ÇIKIŞI</button>
         </div>
       </div>
@@ -638,7 +588,6 @@ export default function App() {
   // --- ANA EKRAN ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
-      {/* Gizli Audio Elementleri */}
       <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={bellAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
@@ -683,7 +632,14 @@ export default function App() {
                              <div className="p-4 bg-slate-950 rounded-xl border border-emerald-900/30">
                                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-emerald-500 flex items-center gap-2"><Settings size={14}/> Terminal Şifresi</span><button className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold" onClick={async()=>{ const newPass = prompt("Yeni Terminal Şifresi Girin:", systemState.terminalPassword); if(newPass) await updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{terminalPassword: newPass}); }}>Değiştir</button></div>
                              </div>
-                             {/* --- YENİ: Ses Motoru Başlatma Butonu --- */}
+                             
+                             {/* --- LOG PANELI (SADECE TERMİNALDE) --- */}
+                             <div className="bg-black/50 p-4 rounded-xl border border-slate-800 h-40 overflow-y-auto font-mono text-[10px] text-slate-400">
+                                <div className="flex items-center gap-2 text-emerald-500 mb-2 font-bold"><Activity size={12}/> SİSTEM LOGLARI</div>
+                                {debugLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
+                                {debugLogs.length === 0 && <div>Log bekleniyor...</div>}
+                             </div>
+
                              {!isAudioContextReady && (
                                 <button onClick={unlockAudioContext} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-white flex items-center justify-center gap-2 animate-pulse shadow-lg shadow-emerald-900/20">
                                     <Power size={20} />
@@ -711,7 +667,7 @@ export default function App() {
             </div>
         )}
 
-        {/* ... (DİĞER TABLAR - DEĞİŞİKLİK YOK) ... */}
+        {/* ... (Diğer Tablar - Değişiklik Yok) ... */}
         {activeTab === 'planner' && (
             <div className="space-y-6 animate-in slide-in-from-bottom-4 relative">
                  {scheduleModal.open && (
