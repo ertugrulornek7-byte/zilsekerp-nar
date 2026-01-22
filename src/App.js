@@ -5,15 +5,15 @@ import {
   collection, addDoc, deleteDoc, arrayUnion, arrayRemove, query, orderBy, getDocs, where
 } from 'firebase/firestore';
 import { 
-  getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
+  getAuth, signInAnonymously, signInWithCustomToken 
 } from 'firebase/auth';
 import { 
   Bell, Mic, Volume2, Users, Monitor,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Share, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.20.85"; // Anons Format Fix (Default Mime)
+const VERSION = "19.01.20.90"; // Build Fix (Unused Vars) & Audio Element Restore
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -225,6 +225,7 @@ export default function App() {
   // --- SES İŞLEME MANTIĞI ---
   const processAudioQueue = useCallback(() => {
       const audioEl = stationAudioRef.current;
+      // stationAudioRef.current'ın var olup olmadığını kontrol et
       if (!audioEl || isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
       
       isPlayingQueueRef.current = true;
@@ -557,6 +558,8 @@ export default function App() {
                      </select>
                      <button className="bg-blue-600 px-6 rounded-xl font-bold hover:bg-blue-500"><ArrowRight/></button>
                  </div>
+                 {/* HATA MESAJI BURAYA EKLENDİ */}
+                 {loginError && <div className="text-red-500 text-xs font-bold mt-2 ml-2">{loginError}</div>}
              </div>
           </form>
 
@@ -579,7 +582,7 @@ export default function App() {
   // --- ANA EKRAN ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
-      {/* Gizli Audio Elementleri */}
+      {/* Gizli Audio Elementleri - Geri Eklendi */}
       <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
 
