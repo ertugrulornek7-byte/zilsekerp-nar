@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.20.110"; // Build Fix (Unused autoStopTimerRef Removed)
+const VERSION = "22.01.15.20"; // Anons Codec Fix & Stop Signal Fix
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -184,13 +184,12 @@ export default function App() {
   const [scheduleModal, setScheduleModal] = useState({ open: false, mode: 'add', data: null, day: null });
   const [copyModal, setCopyModal] = useState({ open: false, type: 'day', sourceData: null });
 
-  // Refs - v19.01.20.16'ya dönüş
+  // Refs
   const stationAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null); 
   const previewAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null);
   const mediaRecorderRef = useRef(null);
   const audioQueueRef = useRef([]); 
   const isPlayingQueueRef = useRef(false);
-  // autoStopTimerRef KALDIRILDI (Hata kaynağı)
   const audioChunksRef = useRef([]);
   
   const lastStopSignalRef = useRef(0);
@@ -228,13 +227,12 @@ export default function App() {
      initAuth();
 
      return () => {
-         // Cleanup with captured variables
          if(stationAudio) stationAudio.pause();
          if(previewAudio) previewAudio.pause();
      };
   }, []);
 
-  // --- SES İŞLEME MANTIĞI (v16'ya DÖNÜŞ) ---
+  // --- SES İŞLEME MANTIĞI ---
   const processAudioQueue = useCallback(() => {
       const audioEl = stationAudioRef.current;
       if (!audioEl || isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
@@ -271,15 +269,18 @@ export default function App() {
         if (isStation && stationAudioRef.current) {
             if (data.volume !== undefined) stationAudioRef.current.volume = Math.max(0, Math.min(1, data.volume / 100));
             
+            // Stop Signal Fix: İlk açılışta (ref=0) çalışmasını engelle, sadece yeni sinyallerde çalış.
             if (data.stopSignal && data.stopSignal !== lastStopSignalRef.current) {
-                console.log("Stop Signal:", data.stopSignal);
-                stationAudioRef.current.pause(); 
-                stationAudioRef.current.currentTime = 0; 
-                audioQueueRef.current = []; 
-                isPlayingQueueRef.current = false;
+                if (lastStopSignalRef.current !== 0) {
+                    console.log("Stop Signal:", data.stopSignal);
+                    stationAudioRef.current.pause(); 
+                    stationAudioRef.current.currentTime = 0; 
+                    audioQueueRef.current = []; 
+                    isPlayingQueueRef.current = false;
+                    setStatusMsg("Ses Kesildi.");
+                    setTimeout(() => setStatusMsg(''), 1500);
+                }
                 lastStopSignalRef.current = data.stopSignal;
-                setStatusMsg("Ses Kesildi.");
-                setTimeout(() => setStatusMsg(''), 1500);
             }
         }
         setSystemState(prev => ({ ...prev, ...data }));
@@ -301,7 +302,7 @@ export default function App() {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
-                    if (Date.now() - audioData.createdAt < 60000) { // 1 dk tolerans
+                    if (Date.now() - audioData.createdAt < 60000) { 
                         playAudioChunk(audioData.url);
                     }
                     deleteDoc(change.doc.ref).catch(() => {});
@@ -340,14 +341,22 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- TELSİZ MODU (v16 MANTIĞI) ---
+  // --- TELSİZ MODU (v16 MANTIĞI GERİ GELDİ) ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
   
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          // v16'daki gibi options olmadan, sade başlatma
-          mediaRecorderRef.current = new MediaRecorder(stream);
+          
+          // v16 Ayarları: Desteklenen MimeType'ı belirle (ÖNEMLİ)
+          let options = {};
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = { mimeType: 'audio/webm;codecs=opus' };
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+          }
+
+          mediaRecorderRef.current = new MediaRecorder(stream, options);
           audioChunksRef.current = [];
           
           mediaRecorderRef.current.ondataavailable = (e) => { 
@@ -358,17 +367,16 @@ export default function App() {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
                  
-                 const reader = new FileReader();
-                 // Sade Blob oluşturma
-                 const audioBlob = new Blob(audioChunksRef.current);
+                 // v16 Mantığı: Kayıt için belirlenen type'ı kullan
+                 const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType || 'audio/webm' });
                  
-                 // Boyut kontrolünü biraz esnettim
                  if (audioBlob.size > 2 * 1024 * 1024) {
                      setIsUploadingChunk(false);
                      setStatusMsg("HATA: Kayıt çok büyük!");
                      return;
                  }
 
+                 const reader = new FileReader();
                  reader.onloadend = async () => {
                      try {
                          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), {
@@ -386,7 +394,6 @@ export default function App() {
           setIsBroadcasting(true); 
           setStatusMsg("KAYITTA - Konuşun");
           
-          // Güvenlik zamanlayıcısı (değişkene atamadan direkt çağrı)
           setTimeout(() => { 
               if (mediaRecorderRef.current?.state === 'recording') stopBroadcast(); 
           }, 60000); 
@@ -607,6 +614,7 @@ export default function App() {
                     )}
                     
                     <button onClick={()=>{
+                        // Ses Kesme Butonu (TimeStamp göndererek tetikler)
                         updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{stopSignal:Date.now()});
                     }} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
                 </div>
