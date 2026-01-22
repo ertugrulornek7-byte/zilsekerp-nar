@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.20.105"; // ESLint Build Fix (Ref Cleanup)
+const VERSION = "19.01.20.110"; // Build Fix (Unused autoStopTimerRef Removed)
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -190,7 +190,7 @@ export default function App() {
   const mediaRecorderRef = useRef(null);
   const audioQueueRef = useRef([]); 
   const isPlayingQueueRef = useRef(false);
-  const autoStopTimerRef = useRef(null);
+  // autoStopTimerRef KALDIRILDI (Hata kaynağı)
   const audioChunksRef = useRef([]);
   
   const lastStopSignalRef = useRef(0);
@@ -386,7 +386,7 @@ export default function App() {
           setIsBroadcasting(true); 
           setStatusMsg("KAYITTA - Konuşun");
           
-          // Güvenlik zamanlayıcısı (v16'da yoktu ama güvenlik için tutuyoruz)
+          // Güvenlik zamanlayıcısı (değişkene atamadan direkt çağrı)
           setTimeout(() => { 
               if (mediaRecorderRef.current?.state === 'recording') stopBroadcast(); 
           }, 60000); 
@@ -560,6 +560,10 @@ export default function App() {
   // --- ANA EKRAN ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
+      {/* Gizli Audio Elementleri */}
+      <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
+      <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
+
       <header className="bg-slate-900/50 backdrop-blur-xl border-b border-slate-800 p-4 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
