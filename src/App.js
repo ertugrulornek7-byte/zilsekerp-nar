@@ -9,11 +9,11 @@ import {
 } from 'firebase/auth';
 import { 
   Bell, Mic, Volume2, Users, Monitor,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power, Radio
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.15.20"; // Anons Codec Fix & Stop Signal Fix
+const VERSION = "22.01.16.45"; // Debug Modu & Varsayılan Kayıt Formatı
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -204,7 +204,6 @@ export default function App() {
         document.head.appendChild(script);
      }
 
-     // Audio Init & Capture for Cleanup
      const stationAudio = stationAudioRef.current;
      const previewAudio = previewAudioRef.current;
 
@@ -240,14 +239,24 @@ export default function App() {
       isPlayingQueueRef.current = true;
       const nextChunk = audioQueueRef.current.shift();
       
+      // HATA AYIKLAMA: Ses çalmaya çalışırken konsola bilgi ver
+      console.log("Ses oynatılmaya çalışılıyor...", nextChunk ? "Veri Var" : "Veri Yok");
+
       audioEl.src = nextChunk;
       audioEl.onended = () => { 
+          console.log("Ses bitti.");
           isPlayingQueueRef.current = false; 
           processAudioQueue(); 
       };
-      audioEl.play().catch(e => { 
-          console.warn("Oynatma hatası:", e); 
+      
+      audioEl.play().then(() => {
+          console.log("Ses başarıyla çalıyor.");
+          setStatusMsg("🔊 Anons Çalınıyor...");
+          setTimeout(() => setStatusMsg(''), 3000);
+      }).catch(e => { 
+          console.warn("Oynatma Hatası (Autoplay Policy?):", e); 
           isPlayingQueueRef.current = false; 
+          setStatusMsg("Ses Çalma Hatası: Ekrana tıklayın!");
           processAudioQueue(); 
       });
   }, []);
@@ -269,10 +278,8 @@ export default function App() {
         if (isStation && stationAudioRef.current) {
             if (data.volume !== undefined) stationAudioRef.current.volume = Math.max(0, Math.min(1, data.volume / 100));
             
-            // Stop Signal Fix: İlk açılışta (ref=0) çalışmasını engelle, sadece yeni sinyallerde çalış.
             if (data.stopSignal && data.stopSignal !== lastStopSignalRef.current) {
                 if (lastStopSignalRef.current !== 0) {
-                    console.log("Stop Signal:", data.stopSignal);
                     stationAudioRef.current.pause(); 
                     stationAudioRef.current.currentTime = 0; 
                     audioQueueRef.current = []; 
@@ -296,14 +303,22 @@ export default function App() {
         const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setCustomSounds(items);
     });
 
+    // CANLI YAYIN DİNLEYİCİSİ (HATA AYIKLAMA İLE)
     let unsubLive = () => {};
     if (isStation) {
         unsubLive = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), where("institutionId", "==", instId), orderBy('createdAt', 'asc')), (snapshot) => {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
+                    
+                    // DEBUG UYARISI: Veri geldiğinde göster
+                    setStatusMsg("📡 ANONS VERİSİ GELDİ! İŞLENİYOR...");
+                    console.log("Firebase'den ses verisi alındı:", audioData);
+
                     if (Date.now() - audioData.createdAt < 60000) { 
                         playAudioChunk(audioData.url);
+                    } else {
+                        console.log("Eski anons, atlanıyor.");
                     }
                     deleteDoc(change.doc.ref).catch(() => {});
                 }
@@ -341,22 +356,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- TELSİZ MODU (v16 MANTIĞI GERİ GELDİ) ---
+  // --- TELSİZ MODU (SADELEŞTİRİLMİŞ KAYIT) ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
   
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           
-          // v16 Ayarları: Desteklenen MimeType'ı belirle (ÖNEMLİ)
-          let options = {};
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            options = { mimeType: 'audio/webm;codecs=opus' };
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            options = { mimeType: 'audio/mp4' };
-          }
-
-          mediaRecorderRef.current = new MediaRecorder(stream, options);
+          // HİÇBİR OPTION VERMİYORUZ - Tarayıcı varsayılanı kullanacak
+          mediaRecorderRef.current = new MediaRecorder(stream);
           audioChunksRef.current = [];
           
           mediaRecorderRef.current.ondataavailable = (e) => { 
@@ -367,8 +375,8 @@ export default function App() {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
                  
-                 // v16 Mantığı: Kayıt için belirlenen type'ı kullan
-                 const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType || 'audio/webm' });
+                 // Blob oluştururken de type belirtmiyoruz, chunks'tan otomatik alsın
+                 const audioBlob = new Blob(audioChunksRef.current); 
                  
                  if (audioBlob.size > 2 * 1024 * 1024) {
                      setIsUploadingChunk(false);
