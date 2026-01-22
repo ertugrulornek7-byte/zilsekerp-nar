@@ -7,14 +7,13 @@ import {
 import { 
   getAuth, signInAnonymously, signInWithCustomToken 
 } from 'firebase/auth';
-// DÜZELTME BURADA YAPILDI: Kullanılmayan 'Power' ve 'Radio' çıkarıldı.
 import { 
   Bell, Mic, Volume2, Users, Monitor,
   Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.46"; // Versiyonu ufak bir güncelledim
+const VERSION = "22.01.16.47"; // Ses Formatı Düzeltmesi (MimeType Fix)
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -355,14 +354,25 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- TELSİZ MODU ---
+  // --- TELSİZ MODU (DÜZELTİLMİŞ) ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
   
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           
-          mediaRecorderRef.current = new MediaRecorder(stream);
+          // DÜZELTME: Tarayıcının desteklediği doğru MIME türünü bul
+          let mimeType = 'audio/webm';
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+              mimeType = 'audio/webm;codecs=opus';
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+              mimeType = 'audio/mp4';
+          }
+          
+          // MediaRecorder'ı bu tür ile başlat
+          mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
+          mediaRecorderRef.current.mimeType = mimeType; // Türü sakla
+          
           audioChunksRef.current = [];
           
           mediaRecorderRef.current.ondataavailable = (e) => { 
@@ -373,9 +383,12 @@ export default function App() {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
                  
-                 const audioBlob = new Blob(audioChunksRef.current); 
+                 // DÜZELTME: Blob oluştururken doğru MIME türünü kullan
+                 // Bu sayede oluşan DataURL "data:audio/webm;base64,..." formatında olacak
+                 const recordedMimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
+                 const audioBlob = new Blob(audioChunksRef.current, { type: recordedMimeType }); 
                  
-                 if (audioBlob.size > 2 * 1024 * 1024) {
+                 if (audioBlob.size > 5 * 1024 * 1024) { // Limit biraz artırıldı
                      setIsUploadingChunk(false);
                      setStatusMsg("HATA: Kayıt çok büyük!");
                      return;
