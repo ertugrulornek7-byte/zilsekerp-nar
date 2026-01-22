@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.20.100"; // v19.01.20.16 Ses Motoruna Dönüş (Stable)
+const VERSION = "19.01.20.105"; // ESLint Build Fix (Ref Cleanup)
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -190,6 +190,7 @@ export default function App() {
   const mediaRecorderRef = useRef(null);
   const audioQueueRef = useRef([]); 
   const isPlayingQueueRef = useRef(false);
+  const autoStopTimerRef = useRef(null);
   const audioChunksRef = useRef([]);
   
   const lastStopSignalRef = useRef(0);
@@ -204,9 +205,12 @@ export default function App() {
         document.head.appendChild(script);
      }
 
-     // Audio Init - v16 mantığı
-     if(stationAudioRef.current) stationAudioRef.current.onerror = (e) => console.warn("Audio Error:", e);
-     if(previewAudioRef.current) previewAudioRef.current.onerror = (e) => console.warn("Preview Error:", e);
+     // Audio Init & Capture for Cleanup
+     const stationAudio = stationAudioRef.current;
+     const previewAudio = previewAudioRef.current;
+
+     if(stationAudio) stationAudio.onerror = (e) => console.warn("Audio Error:", e);
+     if(previewAudio) previewAudio.onerror = (e) => console.warn("Preview Error:", e);
 
      const initAuth = async () => {
         try {
@@ -224,8 +228,9 @@ export default function App() {
      initAuth();
 
      return () => {
-         if(stationAudioRef.current) stationAudioRef.current.pause();
-         if(previewAudioRef.current) previewAudioRef.current.pause();
+         // Cleanup with captured variables
+         if(stationAudio) stationAudio.pause();
+         if(previewAudio) previewAudio.pause();
      };
   }, []);
 
