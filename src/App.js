@@ -7,13 +7,14 @@ import {
 import { 
   getAuth, signInAnonymously, signInWithCustomToken 
 } from 'firebase/auth';
+// DÜZELTME BURADA YAPILDI: Kullanılmayan 'Power' ve 'Radio' çıkarıldı.
 import { 
   Bell, Mic, Volume2, Users, Monitor,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power, Radio
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.45"; // Debug Modu & Varsayılan Kayıt Formatı
+const VERSION = "22.01.16.46"; // Versiyonu ufak bir güncelledim
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -239,7 +240,6 @@ export default function App() {
       isPlayingQueueRef.current = true;
       const nextChunk = audioQueueRef.current.shift();
       
-      // HATA AYIKLAMA: Ses çalmaya çalışırken konsola bilgi ver
       console.log("Ses oynatılmaya çalışılıyor...", nextChunk ? "Veri Var" : "Veri Yok");
 
       audioEl.src = nextChunk;
@@ -303,7 +303,7 @@ export default function App() {
         const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setCustomSounds(items);
     });
 
-    // CANLI YAYIN DİNLEYİCİSİ (HATA AYIKLAMA İLE)
+    // CANLI YAYIN DİNLEYİCİSİ
     let unsubLive = () => {};
     if (isStation) {
         unsubLive = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), where("institutionId", "==", instId), orderBy('createdAt', 'asc')), (snapshot) => {
@@ -311,7 +311,6 @@ export default function App() {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
                     
-                    // DEBUG UYARISI: Veri geldiğinde göster
                     setStatusMsg("📡 ANONS VERİSİ GELDİ! İŞLENİYOR...");
                     console.log("Firebase'den ses verisi alındı:", audioData);
 
@@ -356,14 +355,13 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- TELSİZ MODU (SADELEŞTİRİLMİŞ KAYIT) ---
+  // --- TELSİZ MODU ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
   
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           
-          // HİÇBİR OPTION VERMİYORUZ - Tarayıcı varsayılanı kullanacak
           mediaRecorderRef.current = new MediaRecorder(stream);
           audioChunksRef.current = [];
           
@@ -375,7 +373,6 @@ export default function App() {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
                  
-                 // Blob oluştururken de type belirtmiyoruz, chunks'tan otomatik alsın
                  const audioBlob = new Blob(audioChunksRef.current); 
                  
                  if (audioBlob.size > 2 * 1024 * 1024) {
@@ -551,7 +548,6 @@ export default function App() {
                      </select>
                      <button className="bg-blue-600 px-6 rounded-xl font-bold hover:bg-blue-500"><ArrowRight/></button>
                  </div>
-                 {/* HATA MESAJI */}
                  {loginError && <div className="text-red-500 text-xs font-bold mt-2 ml-2">{loginError}</div>}
              </div>
           </form>
@@ -575,7 +571,6 @@ export default function App() {
   // --- ANA EKRAN ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
-      {/* Gizli Audio Elementleri */}
       <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
 
@@ -614,7 +609,6 @@ export default function App() {
                         <input type="range" min="0" max="100" value={systemState.volume} onChange={(e)=>{const v=parseInt(e.target.value); setSystemState(p=>({...p, volume:v}));}} onMouseUp={()=>updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{volume:systemState.volume})} onTouchEnd={()=>updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{volume:systemState.volume})} className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500 mb-6"/>
                     </div>
                     
-                    {/* TERMINAL ŞİFRESİ DEĞİŞTİRME */}
                     {isStation && (
                         <div className="mb-4 p-4 bg-slate-950 rounded-xl border border-emerald-900/30">
                              <div className="flex justify-between items-center"><span className="text-xs font-bold text-emerald-500 flex items-center gap-2"><Settings size={14}/> Terminal Şifresi</span><button className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold" onClick={async()=>{ const newPass = prompt("Yeni Terminal Şifresi Girin:", systemState.terminalPassword); if(newPass) await updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{terminalPassword: newPass}); }}>Değiştir</button></div>
@@ -622,7 +616,6 @@ export default function App() {
                     )}
                     
                     <button onClick={()=>{
-                        // Ses Kesme Butonu (TimeStamp göndererek tetikler)
                         updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{stopSignal:Date.now()});
                     }} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
                 </div>
@@ -638,7 +631,6 @@ export default function App() {
             </div>
         )}
 
-        {/* ... (DİĞER TABLAR) ... */}
         {activeTab === 'planner' && (
             <div className="space-y-6 animate-in slide-in-from-bottom-4 relative">
                  {scheduleModal.open && (
