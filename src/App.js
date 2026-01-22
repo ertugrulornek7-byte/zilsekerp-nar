@@ -9,11 +9,11 @@ import {
 } from 'firebase/auth';
 import { 
   Bell, Mic, Volume2, Users, Monitor,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.20.95"; // Anons Revert & UI Temizlik
+const VERSION = "19.01.20.99"; // Build Fix (Unused 'Power' Removed)
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
