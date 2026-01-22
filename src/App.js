@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
-  getFirestore, doc, setDoc, onSnapshot, updateDoc, 
-  collection, addDoc, deleteDoc, arrayUnion, arrayRemove, query, orderBy
+  getFirestore, doc, onSnapshot, updateDoc, 
+  collection, addDoc, deleteDoc, arrayUnion, arrayRemove, query, orderBy, getDocs, where
 } from 'firebase/firestore';
 import { 
   getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
 } from 'firebase/auth';
 import { 
-  Bell, Mic, Volume2, Users, Play, Monitor, Pause,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, RefreshCw, AlertTriangle, Share, Loader2
+  Bell, Mic, Volume2, Users, Monitor,
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Share, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.20.16"; // Sistem Kütüphanesi Onarımı
+const VERSION = "19.01.20.85"; // Anons Format Fix (Default Mime)
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -26,13 +26,11 @@ const firebaseConfig = {
   measurementId: "G-F62G5ZSBVL"
 };
 
-// Firebase başlatma
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// App ID kontrolü - Hata önleyici kontrol eklendi
-const appId = (typeof window !== 'undefined' && window['__app_id']) ? window['__app_id'] : 'smart-bell-app-pro';
+const appId = 'smart-bell-app-pro';
 
 const DAYS = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"];
 const DEFAULT_SOUNDS = [
@@ -40,29 +38,133 @@ const DEFAULT_SOUNDS = [
   { id: 'school', name: 'Okul Zili', url: 'https://assets.mixkit.co/active_storage/sfx/950/950-preview.mp3' },
 ];
 
+// --- GİRİŞ / KAYIT EKRANI ---
+const AuthScreen = ({ onLogin }) => {
+    const [isRegister, setIsRegister] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setError('');
+        const fd = new FormData(e.target);
+        const email = fd.get('email').trim().toLowerCase();
+        const password = fd.get('password');
+
+        try {
+            const instRef = collection(db, 'artifacts', appId, 'public', 'data', 'institutions');
+            
+            if (isRegister) {
+                const terminalPass = fd.get('terminalPass');
+                const instName = fd.get('instName');
+
+                const q = query(instRef, where("email", "==", email));
+                const snap = await getDocs(q);
+                if (!snap.empty) throw new Error("Bu e-posta adresi zaten kayıtlı.");
+
+                const newInstRef = await addDoc(instRef, {
+                    email,
+                    password, 
+                    institutionName: instName,
+                    terminalPassword: terminalPass,
+                    createdAt: Date.now(),
+                    users: ['Müdür', 'Müdür Yardımcısı'],
+                    volume: 50,
+                    stopSignal: 0
+                });
+
+                onLogin({ uid: newInstRef.id, name: instName });
+
+            } else {
+                const q = query(instRef, where("email", "==", email), where("password", "==", password));
+                const snap = await getDocs(q);
+                
+                if (snap.empty) throw new Error("Hatalı e-posta veya şifre.");
+
+                const userData = snap.docs[0].data();
+                onLogin({ uid: snap.docs[0].id, name: userData.institutionName });
+            }
+        } catch (err) {
+            console.error("Auth Error:", err);
+            setError(err.message || "İşlem başarısız.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative">
+            <div className="w-full max-w-md bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-purple-600"></div>
+                <div className="flex flex-col items-center mb-8">
+                    <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center shadow-lg shadow-blue-900/50 mb-4">
+                        <Bell size={40} className="text-white"/>
+                    </div>
+                    <h1 className="text-2xl font-black text-white tracking-tight">AKILLI ZİL SİSTEMİ</h1>
+                    <p className="text-slate-400 text-sm">Kurumsal Giriş</p>
+                </div>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    {isRegister && (
+                        <div className="relative">
+                            <Building2 className="absolute left-4 top-3.5 text-slate-500" size={20}/>
+                            <input name="instName" placeholder="Kurum Adı" required className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-12 pr-4 text-white outline-none focus:border-blue-500" />
+                        </div>
+                    )}
+                    <div className="relative">
+                        <Mail className="absolute left-4 top-3.5 text-slate-500" size={20}/>
+                        <input name="email" type="email" placeholder="E-Posta Adresi" required className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-12 pr-4 text-white outline-none focus:border-blue-500" />
+                    </div>
+                    <div className="relative">
+                        <Lock className="absolute left-4 top-3.5 text-slate-500" size={20}/>
+                        <input name="password" type="password" placeholder="Giriş Şifresi" required className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-12 pr-4 text-white outline-none focus:border-blue-500" />
+                    </div>
+                    
+                    {isRegister && (
+                        <div className="relative animate-in fade-in">
+                             <Monitor className="absolute left-4 top-3.5 text-emerald-500" size={20}/>
+                             <input name="terminalPass" type="text" placeholder="Terminal Şifresi Belirle" required className="w-full bg-slate-950 border border-emerald-900/50 rounded-xl py-3 pl-12 pr-4 text-white outline-none focus:border-emerald-500 placeholder:text-emerald-700" />
+                             <p className="text-[10px] text-emerald-600 mt-1 ml-1">* Terminale giriş için kullanılacaktır.</p>
+                        </div>
+                    )}
+
+                    {error && <div className="text-red-500 text-xs font-bold text-center bg-red-900/20 p-2 rounded-lg">{error}</div>}
+
+                    <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/20 transition-all active:scale-95 disabled:opacity-50 flex justify-center">
+                        {loading ? <Loader2 className="animate-spin"/> : (isRegister ? 'KAYIT OL' : 'GİRİŞ YAP')}
+                    </button>
+                </form>
+
+                <div className="mt-6 text-center">
+                    <button onClick={() => setIsRegister(!isRegister)} className="text-slate-500 hover:text-white text-sm font-medium transition-colors">
+                        {isRegister ? 'Zaten hesabınız var mı? Giriş Yapın' : 'Yeni Kurum Kaydı Oluştur'}
+                    </button>
+                </div>
+            </div>
+            <div className="absolute bottom-4 text-[9px] text-slate-600 font-mono opacity-50">v{VERSION}</div>
+        </div>
+    );
+};
+
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [profileName, setProfileName] = useState(() => {
-    if (typeof window !== 'undefined') {
-        return localStorage.getItem('bell_profile_name') || '';
-    }
-    return '';
+  const [institution, setInstitution] = useState(() => {
+      const savedId = localStorage.getItem('bell_inst_id');
+      const savedName = localStorage.getItem('bell_inst_name');
+      return (savedId && savedName) ? { uid: savedId, name: savedName } : null;
   });
-  const [isStation, setIsStation] = useState(() => {
-    if (typeof window !== 'undefined') {
-        return localStorage.getItem('bell_is_station') === 'true';
-    }
-    return false;
-  });
-  const [activeTab, setActiveTab] = useState('control'); 
-  const [isIOS, setIsIOS] = useState(false);
+  const [isFirebaseReady, setIsFirebaseReady] = useState(false);
   
+  const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
+  const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  const [activeTab, setActiveTab] = useState('control'); 
   const [systemState, setSystemState] = useState({
     volume: 50,
     stopSignal: 0,
-    activeControllerId: null,
-    activeControllerName: '',
-    announcementUrl: null,
+    institutionName: '',
+    terminalPassword: '',
     lastTriggeredBell: null
   });
 
@@ -76,13 +178,13 @@ export default function App() {
   const [statusMsg, setStatusMsg] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [passwordModal, setPasswordModal] = useState(false);
   const [playingSoundId, setPlayingSoundId] = useState(null);
-
+  
   // Modals
   const [scheduleModal, setScheduleModal] = useState({ open: false, mode: 'add', data: null, day: null });
   const [copyModal, setCopyModal] = useState({ open: false, type: 'day', sourceData: null });
-  const [passwordModal, setPasswordModal] = useState(false);
-  
+
   // Refs
   const stationAudioRef = useRef(null); 
   const previewAudioRef = useRef(null);
@@ -90,454 +192,432 @@ export default function App() {
   const audioQueueRef = useRef([]); 
   const isPlayingQueueRef = useRef(false);
   const autoStopTimerRef = useRef(null);
-  const audioChunksRef = useRef([]); // Ses parçalarını biriktirmek için
+  const audioChunksRef = useRef([]);
+  
+  const lastStopSignalRef = useRef(0);
 
-  // --- 1. BAŞLANGIÇ AYARLARI ---
+  // --- 1. FIREBASE BAŞLATMA ---
   useEffect(() => {
-    // Tailwind Script Kontrolü
-    if (!document.getElementById('tailwind-script')) {
-      const script = document.createElement('script');
-      script.id = 'tailwind-script';
-      script.src = "https://cdn.tailwindcss.com";
-      script.async = true;
-      document.head.appendChild(script);
-    }
-    
-    // Audio Nesnelerini Başlat (Sadece istemci tarafında)
-    if (typeof window !== 'undefined') {
-        stationAudioRef.current = new Audio();
-        previewAudioRef.current = new Audio();
-        
-        // iOS Tespiti
-        const userAgent = window.navigator.userAgent.toLowerCase();
-        setIsIOS(/iphone|ipad|ipod/.test(userAgent));
+     if (!document.getElementById('tailwind-script')) {
+        const script = document.createElement('script');
+        script.id = 'tailwind-script';
+        script.src = "https://cdn.tailwindcss.com";
+        script.async = true;
+        document.head.appendChild(script);
+     }
 
-        // Audio Error Handling
-        stationAudioRef.current.onerror = (e) => console.warn("Audio Error:", e);
-        previewAudioRef.current.onerror = (e) => console.warn("Preview Error:", e);
-    }
-    
-    // Cleanup
-    return () => {
-        if(stationAudioRef.current) stationAudioRef.current.pause();
-        if(previewAudioRef.current) previewAudioRef.current.pause();
-        if(autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-    };
-  }, []);
-
-  // --- 2. AUTHENTICATION ---
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof window !== 'undefined' && window['__initial_auth_token']) {
-            try {
+     const initAuth = async () => {
+        try {
+            if (window['__initial_auth_token']) {
                 await signInWithCustomToken(auth, window['__initial_auth_token']);
-            } catch (tokenError) {
-                console.warn("Token mismatch, anonim girişe geçiliyor:", tokenError);
+            } else {
                 await signInAnonymously(auth);
             }
-        } else {
-            await signInAnonymously(auth);
+            setIsFirebaseReady(true);
+        } catch (error) {
+            console.error("Firebase Init Error:", error);
+            setStatusMsg("Bağlantı hatası!");
         }
-      } catch (err) { 
-          console.error("Auth error:", err); 
-          setStatusMsg("Bağlantı Hatası: Lütfen sayfayı yenileyin."); 
-      }
-    };
-    initAuth();
-    return onAuthStateChanged(auth, setUser);
+     };
+     initAuth();
   }, []);
 
-  // --- SES İŞLEME MANTIĞI (Queue Sistemi) ---
+  // --- SES İŞLEME MANTIĞI ---
   const processAudioQueue = useCallback(() => {
-      if (isPlayingQueueRef.current || audioQueueRef.current.length === 0 || !stationAudioRef.current) return;
-
+      const audioEl = stationAudioRef.current;
+      if (!audioEl || isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
+      
       isPlayingQueueRef.current = true;
       const nextChunk = audioQueueRef.current.shift();
-      const audioEl = stationAudioRef.current;
       
-      audioEl.src = nextChunk;
-      audioEl.onended = () => {
+      try {
+          audioEl.src = nextChunk;
+          audioEl.load(); // Zorunlu yükleme
+          audioEl.volume = (systemState.volume || 50) / 100;
+          
+          const playPromise = audioEl.play();
+          if (playPromise !== undefined) {
+              playPromise.then(() => {
+                  // Başarılı
+              }).catch(e => {
+                  console.warn("Otomatik Oynatma Engellendi:", e); 
+                  isPlayingQueueRef.current = false; 
+                  setTimeout(processAudioQueue, 500); // Tekrar dene
+              });
+          }
+          
+          audioEl.onended = () => { 
+              isPlayingQueueRef.current = false; 
+              processAudioQueue(); 
+          };
+      } catch (err) {
+          console.error("Audio Source Error", err);
           isPlayingQueueRef.current = false;
           processAudioQueue();
-      };
-      audioEl.play().catch(e => {
-          console.warn("Oynatma hatası:", e);
-          isPlayingQueueRef.current = false;
-          processAudioQueue();
-      });
-  }, []);
-
-  const playAudioChunk = useCallback((base64Url) => {
-      audioQueueRef.current.push(base64Url);
-      processAudioQueue();
+      }
+  }, [systemState.volume]);
+  
+  const playAudioChunk = useCallback((base64Url) => { 
+      audioQueueRef.current.push(base64Url); 
+      processAudioQueue(); 
   }, [processAudioQueue]);
 
-  // --- 3. VERİ SENKRONİZASYONU ---
+  // --- VERİ SENKRONİZASYONU ---
   useEffect(() => {
-    if (!user) return;
+    if (!institution || !isFirebaseReady) return;
+    const instId = institution.uid;
 
-    const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'system_meta', 'settings');
-    const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+    const unsubInst = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'institutions', instId), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         
         if (isStation && stationAudioRef.current) {
-            if (data.volume !== undefined) {
-                stationAudioRef.current.volume = Math.max(0, Math.min(1, data.volume / 100));
-            }
-            if (data.stopSignal && data.stopSignal !== systemState.stopSignal) {
-                stationAudioRef.current.pause();
-                stationAudioRef.current.currentTime = 0;
-                audioQueueRef.current = [];
+            if (data.volume !== undefined) stationAudioRef.current.volume = Math.max(0, Math.min(1, data.volume / 100));
+            
+            if (data.stopSignal && data.stopSignal !== lastStopSignalRef.current) {
+                console.log("Stop Signal Detected:", data.stopSignal);
+                stationAudioRef.current.pause(); 
+                stationAudioRef.current.currentTime = 0; 
+                audioQueueRef.current = []; 
                 isPlayingQueueRef.current = false;
+                lastStopSignalRef.current = data.stopSignal;
+                setStatusMsg("Ses Kesildi.");
+                setTimeout(() => setStatusMsg(''), 1500);
             }
         }
         setSystemState(prev => ({ ...prev, ...data }));
-      } else {
-        setDoc(settingsRef, { volume: 50, stopSignal: 0, activeControllerId: null });
+        setAllowedUsers(data.users || []);
       }
     });
 
-    let unsubLiveStream = () => {};
+    const unsubSchedule = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'schedule'), where("institutionId", "==", instId)), (s) => {
+        const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setSchedule(items);
+    });
+
+    const unsubSounds = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'sounds'), where("institutionId", "==", instId)), (s) => {
+        const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setCustomSounds(items);
+    });
+
+    let unsubLive = () => {};
     if (isStation) {
-        // Live stream koleksiyonunu dinle
-        const streamQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), orderBy('createdAt', 'asc'));
-        unsubLiveStream = onSnapshot(streamQuery, (snapshot) => {
+        unsubLive = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), where("institutionId", "==", instId), orderBy('createdAt', 'asc')), (snapshot) => {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
-                    // Mesajın ne zaman oluşturulduğuna bak (60 sn içindeki mesajları kabul et)
-                    if (Date.now() - audioData.createdAt < 60000) {
+                    // 5 dakika tolerans tanıyalım (Saat farkı vs için)
+                    if (Date.now() - audioData.createdAt < 300000) { 
                         playAudioChunk(audioData.url);
                     }
-                    // Oynatılan veya eski mesajı sil
                     deleteDoc(change.doc.ref).catch(() => {});
                 }
             });
         });
     }
 
-    const unsubUsers = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'system_meta', 'users'), 
-        (s) => setAllowedUsers(s.exists() ? s.data().list || [] : [])
-    );
-    const unsubSchedule = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'schedule'), (s) => {
-        const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setSchedule(items);
-    });
-    const unsubSounds = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'sounds'), (s) => {
-        const items = []; s.forEach(d => items.push({ id: d.id, ...d.data() })); setCustomSounds(items);
-    });
+    return () => { unsubInst(); unsubSchedule(); unsubSounds(); unsubLive(); };
+  }, [institution, isFirebaseReady, isStation, playAudioChunk]);
 
-    return () => {
-        unsubSettings();
-        unsubLiveStream();
-        unsubUsers();
-        unsubSchedule();
-        unsubSounds();
-    };
-  }, [user, isStation, systemState.stopSignal, playAudioChunk, systemState.announcementUrl]);
-
-  // --- ZAMANLAYICI (ZİL ÇALMA) ---
+  // --- ZAMANLAYICI ---
   useEffect(() => {
-    if (!isStation || !user) return;
-    
+    if (!isStation || !institution) return;
     const interval = setInterval(() => {
       const now = new Date();
-      // getDay: 0=Pazar, 1=Pazartesi... Bizim dizimiz 0=Pazartesi başlıyor
       const dayIndex = now.getDay() === 0 ? 6 : now.getDay() - 1;
       const currentDay = DAYS[dayIndex];
       const currentTime = now.toTimeString().slice(0, 5);
       
       schedule.forEach(item => {
         if (item.day === currentDay && item.time === currentTime) {
-          const triggerKey = `${item.id}-${currentTime}-${now.getDate()}`; // Günde bir kez tetiklensin
-          
+          const triggerKey = `${item.id}-${currentTime}-${now.getDate()}`;
           if (systemState.lastTriggeredBell !== triggerKey) {
             if (!isPlayingQueueRef.current && stationAudioRef.current) {
                 stationAudioRef.current.src = item.soundUrl;
                 stationAudioRef.current.onended = null; 
                 stationAudioRef.current.volume = (systemState.volume || 50) / 100;
-                stationAudioRef.current.play().catch(e => console.error("Zil Çalma Hatası", e));
+                stationAudioRef.current.play().catch(e => console.error(e));
             }
-            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'system_meta', 'settings'), { lastTriggeredBell: triggerKey }).catch(()=>{});
+            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'institutions', institution.uid), { lastTriggeredBell: triggerKey }).catch(()=>{});
           }
         }
       });
     }, 4000); 
-
     return () => clearInterval(interval);
-  }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, user]);
+  }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- ANONS FONKSİYONLARI (TELSİZ MODU - SINGLE BLOB) ---
-  const toggleBroadcast = async () => {
-      if (isBroadcasting) stopBroadcast();
-      else startBroadcast();
-  };
-
+  // --- TELSİZ MODU ---
+  const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
+  
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           
-          let options = {};
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            options = { mimeType: 'audio/webm;codecs=opus' };
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            options = { mimeType: 'audio/mp4' };
-          }
-
-          mediaRecorderRef.current = new MediaRecorder(stream, options);
-          audioChunksRef.current = []; // Buffer'ı temizle
-
-          mediaRecorderRef.current.ondataavailable = (e) => {
-              if (e.data.size > 0) {
-                  audioChunksRef.current.push(e.data);
-              }
-          };
-
+          // DÜZELTME: MimeType zorlaması kaldırıldı. Tarayıcı varsayılanı kullanılsın.
+          mediaRecorderRef.current = new MediaRecorder(stream);
+          audioChunksRef.current = [];
+          
+          mediaRecorderRef.current.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+          
           mediaRecorderRef.current.onstop = async () => {
-             // Kayıt bittiğinde tüm parçaları birleştirip TEK SEFERDE gönder
              if (audioChunksRef.current.length > 0) {
-                 setIsUploadingChunk(true);
-                 setStatusMsg("Ses gönderiliyor...");
+                 setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
                  
-                 const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType || 'audio/webm' });
+                 // Tarayıcının ürettiği orijinal type neyse onu kullan
+                 const blob = new Blob(audioChunksRef.current, { type: mediaRecorderRef.current.mimeType });
+                 
+                 if (blob.size > 700 * 1024) {
+                     setIsUploadingChunk(false);
+                     setStatusMsg("HATA: Kayıt çok uzun!");
+                     return;
+                 }
+
                  const reader = new FileReader();
-                 
                  reader.onloadend = async () => {
                      try {
-                         // Boyut kontrolü (Max 2MB güvenli)
-                         if (audioBlob.size > 2 * 1024 * 1024) {
-                             setStatusMsg("Hata: Ses dosyası çok büyük!");
-                             return;
-                         }
-
                          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), {
-                             url: reader.result,
-                             createdAt: Date.now(),
-                             user: profileName
+                             institutionId: institution.uid, url: reader.result, createdAt: Date.now(), user: profileName
                          });
                          setStatusMsg("Anons İletildi!");
-                     } catch (err) {
-                         console.error("Upload Error", err);
-                         setStatusMsg("Gönderim Hatası!");
-                     } finally {
-                         setIsUploadingChunk(false);
-                         setTimeout(() => setStatusMsg(''), 2000);
-                     }
+                     } catch (err) { console.error(err); setStatusMsg("Gönderim Hatası!"); } 
+                     finally { setIsUploadingChunk(false); setTimeout(() => setStatusMsg(''), 2000); }
                  };
-                 reader.readAsDataURL(audioBlob);
+                 reader.readAsDataURL(blob);
              }
           };
-
+          
           mediaRecorderRef.current.start(); 
-          setIsBroadcasting(true);
-          setStatusMsg("KAYITTA - Konuşun (Max 60sn)");
-
-          // Maksimum süre güvenliği (60 Saniye)
+          setIsBroadcasting(true); 
+          setStatusMsg("KAYITTA - Konuşun");
+          
           if(autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-          autoStopTimerRef.current = setTimeout(() => {
-              if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                  stopBroadcast();
-                  setStatusMsg("Süre doldu, gönderiliyor...");
-              }
-          }, 60000); 
-
-      } catch (err) {
-          console.error("Mic Error", err);
-          setStatusMsg("Mikrofon izni verilemedi!");
+          autoStopTimerRef.current = setTimeout(() => { 
+              if (mediaRecorderRef.current?.state === 'recording') stopBroadcast(); 
+          }, 30000); 
+          
+      } catch (err) { 
+          console.error(err);
+          setStatusMsg("Mikrofon hatası!"); 
       }
   };
-
+  
   const stopBroadcast = () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-          mediaRecorderRef.current.stop();
-          mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+      if (mediaRecorderRef.current?.state === 'recording') { 
+          mediaRecorderRef.current.stop(); 
+          mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop()); 
       }
-      if(autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
       setIsBroadcasting(false);
   };
 
-  // --- YARDIMCI FONKSİYONLAR ---
-  const handleSoundPreview = (id, url) => {
-      if (!previewAudioRef.current) return;
+  // --- HANDLERS ---
+  const handleInstitutionLogin = (instData) => {
+      setInstitution(instData);
+      localStorage.setItem('bell_inst_id', instData.uid);
+      localStorage.setItem('bell_inst_name', instData.name);
+  };
 
-      if (playingSoundId === id) {
-          previewAudioRef.current.pause();
-          previewAudioRef.current.currentTime = 0;
-          setPlayingSoundId(null);
-      } else {
-          previewAudioRef.current.src = url;
-          previewAudioRef.current.volume = 1.0;
-          previewAudioRef.current.play().catch(e => console.warn("Preview Err", e));
-          setPlayingSoundId(id);
-          previewAudioRef.current.onended = () => setPlayingSoundId(null);
+  const handleStationLogin = (e) => {
+      e.preventDefault();
+      const enteredPass = e.target.password.value;
+      if (enteredPass === systemState.terminalPassword) {
+          setIsStation(true); 
+          setProfileName('Terminal'); 
+          localStorage.setItem('bell_is_station', 'true'); 
+          setPasswordModal(false);
+          setAudioUnlocked(false); 
+      } else { alert("Hatalı Terminal Şifresi!"); }
+  };
+
+  // SES KİLİDİNİ AÇMA FONKSİYONU
+  const unlockAudio = () => {
+      if(stationAudioRef.current) {
+          // Sessiz WAV Dosyası (Base64)
+          stationAudioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+          stationAudioRef.current.volume = 1.0;
+          stationAudioRef.current.play().then(() => {
+              setAudioUnlocked(true);
+              setStatusMsg("Ses Motoru Aktif Edildi");
+              setTimeout(()=>setStatusMsg(''), 2000);
+          }).catch(e => {
+              console.error("Unlock failed", e);
+              // Hatayı ekrana da basalım
+              setStatusMsg("Ses Hatası: " + (e.message || "Bilinmiyor"));
+          });
       }
+  };
+
+  const handleProfileLogin = (e) => {
+      e.preventDefault();
+      const name = e.target.username.value.trim();
+      if(allowedUsers.includes(name)) {
+          setProfileName(name); localStorage.setItem('bell_profile_name', name);
+      } else setLoginError('Kullanıcı listede yok.');
   };
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 800 * 1024) { setStatusMsg("Dosya > 800KB!"); return; }
-
+    if (!file || file.size > 800 * 1024) { setStatusMsg("Dosya > 800KB olmalı!"); return; }
     const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sounds'), {
-            name: file.name, url: event.target.result, createdAt: Date.now()
-        });
-        setStatusMsg("Zil sesi eklendi.");
-      } catch (err) { setStatusMsg("Hata: " + err.message); }
+    reader.onload = async (ev) => {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sounds'), { institutionId: institution.uid, name: file.name, url: ev.target.result, createdAt: Date.now() });
     };
     reader.readAsDataURL(file);
-    e.target.value = '';
   };
 
   const handleAddSchedule = async (e) => {
       e.preventDefault();
       if (isSavingSchedule) return;
-      setIsSavingSchedule(true);
-
+      
       const fd = new FormData(e.target);
       const time = fd.get('time');
       const day = scheduleModal.day;
       
-      const isDuplicate = schedule.some(s => s.day === day && s.time === time && (!scheduleModal.data || s.id !== scheduleModal.data.id));
+      const isDuplicate = schedule.some(s => 
+          s.day === day && 
+          s.time === time && 
+          (scheduleModal.mode === 'add' || (scheduleModal.mode === 'edit' && s.id !== scheduleModal.data.id))
+      );
 
       if (isDuplicate) {
-          setStatusMsg("Bu saatte zaten zil var!");
-          setIsSavingSchedule(false);
+          setStatusMsg("HATA: Bu gün ve saatte zaten bir zil var!");
+          setTimeout(() => setStatusMsg(''), 3000);
           return;
       }
 
-      const newItem = {
-          time, 
-          label: fd.get('label'), 
-          soundUrl: (DEFAULT_SOUNDS.find(s=>s.id===fd.get('soundId')) || customSounds.find(s=>s.id===fd.get('soundId')) || DEFAULT_SOUNDS[0]).url
-      };
-
+      setIsSavingSchedule(true);
+      const newItem = { institutionId: institution.uid, time, label: fd.get('label'), soundUrl: (DEFAULT_SOUNDS.find(s=>s.id===fd.get('soundId')) || customSounds.find(s=>s.id===fd.get('soundId')) || DEFAULT_SOUNDS[0]).url };
+      
       try {
-          if(scheduleModal.mode === 'edit') {
-              await updateDoc(doc(db,'artifacts',appId,'public','data','schedule',scheduleModal.data.id), newItem);
-          } else {
-              await addDoc(collection(db,'artifacts',appId,'public','data','schedule'), {...newItem, day});
-          }
+          if(scheduleModal.mode === 'edit') await updateDoc(doc(db,'artifacts',appId,'public', 'data', 'schedule', scheduleModal.data.id), newItem);
+          else await addDoc(collection(db,'artifacts',appId,'public', 'data', 'schedule'), {...newItem, day});
           setScheduleModal({open:false, mode:'add', data:null, day:null});
-          setStatusMsg("Kaydedildi.");
-      } catch(err) {
-          console.error(err);
-          setStatusMsg("Kayıt başarısız.");
-      } finally {
-          setIsSavingSchedule(false);
-          setTimeout(() => setStatusMsg(''), 2000);
-      }
+      } finally { setIsSavingSchedule(false); }
   };
 
   const performCopy = async (targetDay) => {
       if (!copyModal.sourceData) return;
-      
-      if (copyModal.type === 'day') {
-          const items = schedule.filter(s => s.day === copyModal.sourceData);
-          if (items.length === 0) {
-              setStatusMsg("Kopyalanacak veri yok.");
-              setCopyModal({ open: false, type: 'day', sourceData: null });
-              return;
+      const items = copyModal.type === 'day' ? schedule.filter(s => s.day === copyModal.sourceData) : [copyModal.sourceData];
+      const existingTimes = schedule.filter(s => s.day === targetDay).map(s => s.time);
+      for (const i of items) {
+          if (!existingTimes.includes(i.time)) {
+              await addDoc(collection(db,'artifacts',appId,'public', 'data', 'schedule'), { institutionId: institution.uid, day: targetDay, time:i.time, label:i.label, soundUrl:i.soundUrl });
           }
-          items.forEach(i => addDoc(collection(db,'artifacts',appId,'public','data','schedule'), { day: targetDay, time:i.time, label:i.label, soundUrl:i.soundUrl }));
-          setStatusMsg(`${copyModal.sourceData} > ${targetDay} kopyalandı.`);
-      } else {
-          const i = copyModal.sourceData;
-          addDoc(collection(db,'artifacts',appId,'public','data','schedule'), { day: targetDay, time:i.time, label:i.label, soundUrl:i.soundUrl });
-          setStatusMsg(`Alarm ${targetDay} gününe kopyalandı.`);
       }
       setCopyModal({ open: false, type: 'day', sourceData: null });
+      setStatusMsg("Kopyalama tamamlandı.");
       setTimeout(() => setStatusMsg(''), 3000);
   };
 
-  const handleStationLogin = (e) => {
-      e.preventDefault();
-      if (e.target.password.value === '1453') {
-          setIsStation(true); setProfileName('Terminal'); localStorage.setItem('bell_is_station', 'true'); setPasswordModal(false);
-      } else { alert("Hatalı şifre!"); }
-  };
+  const handleSoundPreview = (id, url) => {
+      const audio = previewAudioRef.current;
+      if (!audio) return;
 
-  const handleLogin = (e) => {
-      if (e.key === 'Enter') {
-          const name = e.target.value.trim();
-          if(allowedUsers.includes(name)) {
-              setProfileName(name); localStorage.setItem('bell_profile_name', name);
-          } else setLoginError('Kullanıcı bulunamadı.');
+      if (playingSoundId === id) {
+          audio.pause();
+          audio.currentTime = 0;
+          setPlayingSoundId(null);
+      } else {
+          audio.src = url;
+          audio.volume = 1.0;
+          audio.play().catch(e => console.warn("Preview Play Err:", e));
+          setPlayingSoundId(id);
+          audio.onended = () => setPlayingSoundId(null);
       }
   };
 
-  const handleResetApp = () => { if(window.confirm("Çıkış yapılsın mı?")) { localStorage.clear(); window.location.reload(); } };
+  // --- RENDER ---
+  if (!isFirebaseReady) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><Loader2 className="text-blue-600 animate-spin" size={40}/></div>;
+  if (!institution) return <AuthScreen onLogin={handleInstitutionLogin} />;
 
-  // --- Views ---
-  const UsersView = () => (
-      <div className="space-y-4 animate-in fade-in">
-          <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800">
-              <h2 className="text-lg font-bold mb-4 text-white flex gap-2"><UserPlus/> Kullanıcı Ekle</h2>
-              <form onSubmit={async(e)=>{e.preventDefault(); const n=e.target.u.value.trim(); if(n){await updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','users'),{list:arrayUnion(n)}); e.target.reset();}}} className="flex gap-2">
-                  <input name="u" placeholder="İsim" className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-white outline-none" required />
-                  <button className="bg-blue-600 px-4 rounded-xl text-white font-bold">Ekle</button>
-              </form>
-          </div>
-          <div className="space-y-2">
-              {allowedUsers.map(u=>(<div key={u} className="bg-slate-900 p-3 rounded-xl border border-slate-800 flex justify-between text-white"><span className="font-bold">{u}</span><button onClick={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','users'),{list:arrayRemove(u)})} className="text-red-500"><Trash2 size={16}/></button></div>))}
-          </div>
-      </div>
-  );
-
+  // Mod Seçim Ekranı
   if (!profileName && !isStation) {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6 relative">
         {passwordModal && (
             <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
-                <form onSubmit={handleStationLogin} className="bg-slate-900 p-8 rounded-3xl w-full max-w-sm text-center border border-slate-700">
-                    <h3 className="text-xl font-bold mb-4">Terminal</h3>
-                    <input type="password" name="password" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 mb-4 text-center text-white" autoFocus />
-                    <div className="flex gap-2"><button type="button" onClick={()=>setPasswordModal(false)} className="flex-1 py-3 bg-slate-800 rounded-xl">İptal</button><button className="flex-1 py-3 bg-blue-600 rounded-xl">Giriş</button></div>
+                <form onSubmit={handleStationLogin} className="bg-slate-900 p-8 rounded-3xl w-full max-w-sm text-center border border-slate-700 relative">
+                    <button onClick={()=>setPasswordModal(false)} type="button" className="absolute top-4 right-4 text-slate-500"><X size={20}/></button>
+                    <div className="w-16 h-16 bg-emerald-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4 text-emerald-500"><Monitor size={32}/></div>
+                    <h3 className="text-xl font-bold mb-2">Terminal Girişi</h3>
+                    <input type="password" name="password" placeholder="Terminal Şifresi" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 mb-4 text-center text-white outline-none focus:border-emerald-500" autoFocus />
+                    <button className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold transition-colors">Aktifleştir</button>
                 </form>
             </div>
         )}
-        {isIOS && !window.navigator.standalone && (
-            <div className="fixed top-0 left-0 right-0 bg-blue-600 text-white p-3 text-center text-xs font-bold z-50">
-                iPhone'a yüklemek için: Paylaş <Share size={12} className="inline"/> butonuna basıp "Ana Ekrana Ekle" seçeneğini kullanın.
-            </div>
-        )}
         <div className="max-w-md w-full bg-slate-900 rounded-[2.5rem] p-10 shadow-2xl border border-slate-800 text-center relative overflow-hidden">
-          <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-blue-900/50"><Bell size={40} /></div>
-          <h1 className="text-3xl font-black mb-2 tracking-tight">Akıllı Zil</h1>
-          <p className="text-slate-400 mb-8 text-sm">Giriş yapmak için isminizi yazın.</p>
-          <input type="text" placeholder="Kullanıcı Adı" className={`w-full bg-slate-950 border ${loginError?'border-red-500':'border-slate-800'} rounded-2xl px-6 py-4 text-center font-bold text-white mb-4 outline-none`} onKeyDown={handleLogin} />
-          {loginError && <div className="text-red-500 text-xs font-bold mb-4">{loginError}</div>}
-          <div className="pt-6 border-t border-slate-800 flex flex-col gap-4">
-             <button onClick={()=>setPasswordModal(true)} className="flex items-center justify-center gap-2 text-xs font-black uppercase text-emerald-500 hover:text-emerald-400"><Monitor size={14}/> Terminal Girişi</button>
-             <button onClick={handleResetApp} className="flex items-center justify-center gap-2 text-xs font-black uppercase text-slate-600 hover:text-red-500"><RefreshCw size={14}/> Sıfırla</button>
+          <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-blue-900/50"><Building2 size={40} /></div>
+          <h1 className="text-xl font-bold mb-1 text-slate-200">{systemState.institutionName || 'Kurum Paneli'}</h1>
+          <p className="text-slate-500 mb-8 text-xs uppercase tracking-widest font-bold">Giriş Modu Seçin</p>
+          
+          <form onSubmit={handleProfileLogin} className="space-y-4 mb-8">
+             <div className="text-left">
+                 <label className="text-xs font-bold text-slate-400 ml-2 mb-1 block">Yönetici / Kullanıcı Girişi</label>
+                 <div className="flex gap-2">
+                     <select name="username" className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none appearance-none">
+                        <option value="">İsim Seçiniz...</option>
+                        {allowedUsers.map(u=><option key={u} value={u}>{u}</option>)}
+                     </select>
+                     <button className="bg-blue-600 px-6 rounded-xl font-bold hover:bg-blue-500"><ArrowRight/></button>
+                 </div>
+             </div>
+          </form>
+
+          <div className="relative py-4">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800"></div></div>
+              <div className="relative flex justify-center"><span className="bg-slate-900 px-4 text-xs text-slate-600 font-bold uppercase">veya</span></div>
           </div>
+
+          <button onClick={()=>setPasswordModal(true)} className="w-full py-4 border border-slate-800 hover:border-emerald-500/50 hover:bg-emerald-900/10 rounded-xl flex items-center justify-center gap-3 text-emerald-500 font-bold transition-all group">
+              <Monitor size={20} className="group-hover:scale-110 transition-transform"/>
+              TERMİNAL MODUNA GEÇ
+          </button>
+
+          <button onClick={()=>{ setInstitution(null); localStorage.removeItem('bell_inst_id'); localStorage.removeItem('bell_inst_name'); }} className="mt-8 text-xs font-bold text-red-500 hover:text-red-400 flex items-center justify-center gap-2 w-full"><LogOut size={12}/> KURUM ÇIKIŞI</button>
         </div>
-        <div className="absolute bottom-4 text-[9px] text-slate-600 font-mono opacity-50">v{VERSION}</div>
       </div>
     );
   }
 
+  // --- ANA EKRAN ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
+      {/* Gizli Audio Elementleri */}
+      <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
+      <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
+
+      {/* Terminal için Ses Kilit Ekranı */}
+      {isStation && !audioUnlocked && (
+          <div className="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-6 text-center">
+              <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center mb-6 animate-pulse">
+                  <Power size={48} className="text-white"/>
+              </div>
+              <h1 className="text-2xl font-black text-white mb-2">SES SİSTEMİ KAPALI</h1>
+              <p className="text-slate-400 mb-8 max-w-sm">Tarayıcı kısıtlamaları nedeniyle ses çıkışı pasif durumda. Aktifleştirmek için butona basın.</p>
+              <button onClick={unlockAudio} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-lg shadow-xl shadow-emerald-900/50 transition-all active:scale-95">
+                  SES MOTORUNU BAŞLAT
+              </button>
+          </div>
+      )}
+
       <header className="bg-slate-900/50 backdrop-blur-xl border-b border-slate-800 p-4 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div className="bg-blue-600 p-2 rounded-xl shadow-lg"><Bell size={20} /></div>
             <div>
-              <h1 className="font-black text-lg tracking-tight">ZİL SİSTEMİ</h1>
-              <span className="text-[10px] text-slate-400 font-black uppercase block">{isStation ? 'TERMİNAL' : profileName}</span>
+              <h1 className="font-black text-lg tracking-tight truncate max-w-[150px] md:max-w-none">{systemState.institutionName}</h1>
+              <span className="text-[10px] text-slate-400 font-black uppercase block flex items-center gap-1">
+                  {isStation ? <Monitor size={10} className="text-emerald-500"/> : <User size={10} className="text-blue-500"/>}
+                  {isStation ? 'TERMİNAL' : profileName}
+              </span>
             </div>
           </div>
-          <div className="hidden md:flex bg-slate-950 rounded-2xl p-1 border border-slate-800">
-            {['control', 'planner', 'sounds', 'users'].map(t => (
-                (!isStation && t === 'users') ? null : 
-                <button key={t} onClick={() => setActiveTab(t)} className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${activeTab === t ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-white'}`}>{t.toUpperCase()}</button>
-            ))}
+          <div className="flex items-center gap-2">
+              <div className="hidden md:flex bg-slate-950 rounded-2xl p-1 border border-slate-800">
+                {['control', 'planner', 'sounds', 'users'].map(t => (
+                    (!isStation && t === 'users') ? null : 
+                    <button key={t} onClick={() => setActiveTab(t)} className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${activeTab === t ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-white'}`}>{t.toUpperCase()}</button>
+                ))}
+              </div>
+              <button onClick={()=>{ if(window.confirm('Profilden çıkılsın mı?')) { setProfileName(''); setIsStation(false); localStorage.removeItem('bell_profile_name'); localStorage.removeItem('bell_is_station'); }}} className="p-2 bg-slate-800 rounded-full hover:bg-red-900/50 text-slate-400 hover:text-red-400"><LogOut size={16} /></button>
           </div>
-          <button onClick={handleResetApp} className="p-2 bg-slate-800 rounded-full hover:bg-red-900/50 text-slate-400 hover:text-red-400"><LogOut size={16} /></button>
         </div>
       </header>
 
@@ -549,22 +629,34 @@ export default function App() {
                 <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl flex flex-col justify-between">
                     <div>
                         <div className="flex justify-between mb-8"><h2 className="text-xs font-black uppercase text-slate-500 flex gap-2"><Volume2 size={16}/> Ses</h2><span className="text-3xl font-mono font-bold text-blue-500">{systemState.volume}%</span></div>
-                        <input type="range" min="0" max="100" value={systemState.volume} onChange={(e)=>{const v=parseInt(e.target.value); setSystemState(p=>({...p, volume:v}));}} onMouseUp={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','settings'),{volume:systemState.volume})} onTouchEnd={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','settings'),{volume:systemState.volume})} className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500 mb-6"/>
+                        <input type="range" min="0" max="100" value={systemState.volume} onChange={(e)=>{const v=parseInt(e.target.value); setSystemState(p=>({...p, volume:v}));}} onMouseUp={()=>updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{volume:systemState.volume})} onTouchEnd={()=>updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{volume:systemState.volume})} className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500 mb-6"/>
                     </div>
-                    <button onClick={()=>updateDoc(doc(db,'artifacts',appId,'public','data','system_meta','settings'),{stopSignal:Date.now()})} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
+                    
+                    {/* TERMINAL ŞİFRESİ DEĞİŞTİRME (Sadece Terminal Modunda) */}
+                    {isStation && (
+                        <div className="mb-4 p-4 bg-slate-950 rounded-xl border border-emerald-900/30">
+                             <div className="flex justify-between items-center"><span className="text-xs font-bold text-emerald-500 flex items-center gap-2"><Settings size={14}/> Terminal Şifresi</span><button className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold" onClick={async()=>{ const newPass = prompt("Yeni Terminal Şifresi Girin:", systemState.terminalPassword); if(newPass) await updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{terminalPassword: newPass}); }}>Değiştir</button></div>
+                        </div>
+                    )}
+                    
+                    <button onClick={()=>{
+                        // Ses Kesme Butonu (TimeStamp göndererek tetikler)
+                        updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{stopSignal:Date.now()});
+                    }} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
                 </div>
                 <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 flex flex-col items-center justify-center relative min-h-[250px]">
                     <button onClick={toggleBroadcast} className={`w-32 h-32 rounded-full flex items-center justify-center transition-all ${isBroadcasting ? 'bg-red-600 animate-pulse shadow-2xl shadow-red-900/50 scale-110' : 'bg-slate-800 hover:bg-slate-700 shadow-xl'}`}>
                         {isBroadcasting ? <StopCircle size={48} className="text-white"/> : <Mic size={48} className="text-slate-400"/>}
                     </button>
                     <p className={`mt-6 text-xs font-black uppercase tracking-widest text-center ${isBroadcasting ? 'text-red-500 animate-pulse' : 'text-slate-500'}`}>
-                        {isBroadcasting ? 'CANLI YAYIN (DURDURMAK İÇİN BAS)' : 'ANONS İÇİN DOKUN (BAŞLAT/DURDUR)'}
+                        {isBroadcasting ? 'KAYITTA (BİTİRMEK İÇİN BAS)' : 'ANONS İÇİN DOKUN (BAS-KONUŞ)'}
                     </p>
-                    {isUploadingChunk && <div className="absolute top-4 right-4 text-xs text-blue-500 flex gap-1 items-center"><Loader2 size={12} className="animate-spin"/> İletiliyor</div>}
+                    {isUploadingChunk && <div className="absolute top-4 right-4 text-xs text-blue-500 flex gap-1 items-center"><Loader2 size={12} className="animate-spin"/> Gönderiliyor</div>}
                 </div>
             </div>
         )}
 
+        {/* ... (DİĞER TABLAR) ... */}
         {activeTab === 'planner' && (
             <div className="space-y-6 animate-in slide-in-from-bottom-4 relative">
                  {scheduleModal.open && (
@@ -613,7 +705,7 @@ export default function App() {
                                         <div className="flex gap-1">
                                             <button onClick={() => setCopyModal({ open: true, type: 'single', sourceData: item })} className="p-1.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-md transition-colors"><Copy size={14}/></button>
                                             <button onClick={()=>setScheduleModal({open:true, mode:'edit', data:item, day:item.day})} className="p-1.5 text-slate-500 hover:text-blue-400"><Edit2 size={14}/></button>
-                                            <button onClick={()=>deleteDoc(doc(db,'artifacts',appId,'public','data','schedule',item.id))} className="p-1.5 text-slate-500 hover:text-red-500"><Trash2 size={14}/></button>
+                                            <button onClick={()=>deleteDoc(doc(db,'artifacts',appId,'public', 'data', 'schedule',item.id))} className="p-1.5 text-slate-500 hover:text-red-500"><Trash2 size={14}/></button>
                                         </div>
                                     </div>
                                 ))}
@@ -636,8 +728,8 @@ export default function App() {
                  </div>
                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                      {[...DEFAULT_SOUNDS, ...customSounds].map(s => (
-                         <div key={s.id} className={`bg-slate-900 p-4 rounded-2xl border flex justify-between items-center ${playingSoundId === s.id ? 'border-blue-500 bg-blue-900/10' : 'border-slate-800'}`}>
-                             <div className="flex items-center gap-3"><div className={`p-3 rounded-xl ${playingSoundId === s.id ? 'bg-blue-600 text-white' : 'bg-slate-800 text-blue-400'}`}><Music size={20}/></div><span className="font-bold text-sm truncate w-24 text-white">{s.name}</span></div>
+                         <div key={s.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex justify-between items-center">
+                             <div className="flex items-center gap-3"><div className="p-3 rounded-xl bg-slate-800 text-blue-400"><Music size={20}/></div><span className="font-bold text-sm truncate w-24 text-white">{s.name}</span></div>
                              <div className="flex gap-1">
                                 <button onClick={()=>handleSoundPreview(s.id, s.url)} className={`p-2 rounded-lg ${playingSoundId === s.id ? 'bg-white text-blue-600' : 'hover:bg-slate-800 text-blue-400'}`}>{playingSoundId === s.id ? <Pause size={18}/> : <Play size={18}/>}</button>
                                 {s.id && !s.id.startsWith('classic') && !s.id.startsWith('school') && <button onClick={()=>deleteDoc(doc(db,'artifacts',appId,'public','data','sounds',s.id))} className="p-2 hover:bg-slate-800 rounded-lg text-red-500"><Trash2 size={18}/></button>}
@@ -648,7 +740,20 @@ export default function App() {
              </div>
         )}
 
-        {activeTab === 'users' && isStation && <UsersView />}
+        {activeTab === 'users' && isStation && (
+            <div className="space-y-4 animate-in fade-in">
+                <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800">
+                    <h2 className="text-lg font-bold mb-4 text-white flex gap-2"><UserPlus/> Kullanıcı Ekle</h2>
+                    <form onSubmit={async(e)=>{e.preventDefault(); const n=e.target.u.value.trim(); if(n){await updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{users:arrayUnion(n)}); e.target.reset();}}} className="flex gap-2">
+                        <input name="u" placeholder="İsim" className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-white outline-none" required />
+                        <button className="bg-blue-600 px-4 rounded-xl text-white font-bold">Ekle</button>
+                    </form>
+                </div>
+                <div className="space-y-2">
+                    {allowedUsers.map(u=>(<div key={u} className="bg-slate-900 p-3 rounded-xl border border-slate-800 flex justify-between text-white"><span className="font-bold">{u}</span><button onClick={()=>updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{users:arrayRemove(u)})} className="text-red-500"><Trash2 size={16}/></button></div>))}
+                </div>
+            </div>
+        )}
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-xl border-t border-slate-800 px-6 py-4 flex justify-around md:hidden z-50">
