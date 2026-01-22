@@ -9,11 +9,11 @@ import {
 } from 'firebase/auth';
 import { 
   Bell, Mic, Volume2, Users, Monitor,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.50"; // Firestore 1MB Limiti Fix & Debug Mesajları
+const VERSION = "22.01.16.51"; // Autoplay Fix & Code Cleanup
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -157,6 +157,7 @@ export default function App() {
   
   const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
   const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
+  const [isAudioContextReady, setIsAudioContextReady] = useState(false); // YENİ: Ses motoru durumu
 
   const [activeTab, setActiveTab] = useState('control'); 
   const [systemState, setSystemState] = useState({
@@ -185,7 +186,6 @@ export default function App() {
   const [copyModal, setCopyModal] = useState({ open: false, type: 'day', sourceData: null });
 
   // Refs
-  // DOM elementlerine bağlanmak için useRef(null) kullanıyoruz
   const stationAudioRef = useRef(null); 
   const bellAudioRef = useRef(null); 
   const previewAudioRef = useRef(null);
@@ -229,35 +229,63 @@ export default function App() {
         }
      };
      initAuth();
-  }, []); // Bağımlılık dizisi boş kalsın
+  }, []);
+
+  // --- SES MOTORUNU BAŞLATMA (YENİ) ---
+  const unlockAudioContext = () => {
+      const station = stationAudioRef.current;
+      const bell = bellAudioRef.current;
+
+      if(station && bell) {
+          // Sessiz bir şekilde oynatıp durdurarak tarayıcı iznini al
+          station.play().then(() => {
+              station.pause();
+              station.currentTime = 0;
+          }).catch(()=>{});
+
+          bell.play().then(() => {
+              bell.pause();
+              bell.currentTime = 0;
+          }).catch(()=>{});
+          
+          setIsAudioContextReady(true);
+          setStatusMsg("Ses Sistemi Aktif!");
+          setTimeout(() => setStatusMsg(''), 2000);
+      }
+  };
 
   // --- SES İŞLEME MANTIĞI (ANONSLAR İÇİN) ---
   const processAudioQueue = useCallback(() => {
-      const audioEl = stationAudioRef.current; // Sadece Anonsları çalar
+      const audioEl = stationAudioRef.current;
       if (!audioEl || isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
       
       isPlayingQueueRef.current = true;
       const nextChunk = audioQueueRef.current.shift();
       
-      console.log("Ses parçası işleniyor...");
+      console.log("Ses işleniyor...");
 
       audioEl.src = nextChunk;
-      audioEl.load(); // YENİ: Yüklemeyi zorla
+      audioEl.load(); 
       
       audioEl.onended = () => { 
-          console.log("Ses parçası bitti.");
+          console.log("Ses bitti.");
           isPlayingQueueRef.current = false; 
           processAudioQueue(); 
       };
       
       audioEl.play().then(() => {
-          console.log("Ses başarıyla çalıyor.");
           setStatusMsg("🔊 ANONS ÇALINIYOR...");
           setTimeout(() => setStatusMsg(''), 5000);
       }).catch(e => { 
           console.error("Oynatma Hatası:", e); 
           isPlayingQueueRef.current = false; 
-          setStatusMsg(`SES ÇALMA HATASI: ${e.message}`);
+          // Eğer hata NotAllowedError ise kullanıcı etkileşimi eksiktir
+          if (e.name === 'NotAllowedError') {
+              setStatusMsg("SES İZNİ GEREKİYOR! Ekrana Dokunun.");
+              setIsAudioContextReady(false);
+          } else {
+              setStatusMsg(`Çalma Hatası: ${e.message}`);
+          }
           processAudioQueue(); 
       });
   }, []);
@@ -321,18 +349,13 @@ export default function App() {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
                     
-                    // Bildirim: Verinin geldiğini kesinleştirelim
-                    setStatusMsg(`📡 VERİ ALINDI: ${audioData.user || 'Kullanıcı'}`);
-                    console.log("Canlı Yayın Verisi:", audioData);
-
-                    if (Date.now() - audioData.createdAt < 300000) { 
-                        if (audioData.url) {
-                            playAudioChunk(audioData.url);
-                        } else {
-                            setStatusMsg("HATA: Boş ses verisi!");
-                        }
+                    setStatusMsg(`📡 VERİ GELDİ: ${audioData.user}`);
+                    
+                    // Veri geçerliliği ve zaman kontrolü (5 dk tolerans)
+                    if (audioData.url && audioData.url.startsWith('data:audio') && Date.now() - audioData.createdAt < 300000) { 
+                        playAudioChunk(audioData.url);
                     } else {
-                        setStatusMsg("HATA: Eski zamanlı veri.");
+                        console.warn("Veri geçersiz veya eski");
                     }
                     deleteDoc(change.doc.ref).catch(() => {});
                 }
@@ -384,9 +407,10 @@ export default function App() {
               } 
           });
           
-          let options = undefined;
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-              options = { mimeType: 'audio/webm;codecs=opus' };
+          let options = {};
+          // En yaygın ve uyumlu formatı seç
+          if (MediaRecorder.isTypeSupported('audio/webm')) {
+              options = { mimeType: 'audio/webm' };
           } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
               options = { mimeType: 'audio/mp4' };
           }
@@ -394,7 +418,7 @@ export default function App() {
           try {
             mediaRecorderRef.current = new MediaRecorder(stream, options);
           } catch (e) {
-             console.warn("MediaRecorder options ile başlatılamadı, varsayılan deneniyor.", e);
+             console.warn("MediaRecorder default ayarlarla başlatılıyor.");
              mediaRecorderRef.current = new MediaRecorder(stream); 
           }
           
@@ -407,15 +431,14 @@ export default function App() {
           mediaRecorderRef.current.onstop = async () => {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); 
-                 setStatusMsg("Ses gönderiliyor...");
+                 setStatusMsg("Gönderiliyor...");
                  
                  const recordedMimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
                  const audioBlob = new Blob(audioChunksRef.current, { type: recordedMimeType }); 
                  
-                 // DÜZELTME: Limit 750KB (Firestore 1MB limiti için güvenli alan)
-                 if (audioBlob.size > 750 * 1024) { 
+                 if (audioBlob.size > 800 * 1024) { 
                      setIsUploadingChunk(false);
-                     setStatusMsg("HATA: Kayıt çok uzun! (Max ~1dk)");
+                     setStatusMsg("HATA: Kayıt çok uzun!");
                      return;
                  }
 
@@ -425,10 +448,10 @@ export default function App() {
                          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), {
                              institutionId: institution.uid, url: reader.result, createdAt: Date.now(), user: profileName
                          });
-                         setStatusMsg("Anons İletildi!");
+                         setStatusMsg("İletildi!");
                      } catch (err) { 
                          console.error(err); 
-                         setStatusMsg("Gönderim Hatası (Veri çok büyük olabilir)"); 
+                         setStatusMsg("Gönderim Hatası"); 
                      } 
                      finally { 
                          setIsUploadingChunk(false); 
@@ -441,15 +464,15 @@ export default function App() {
           
           mediaRecorderRef.current.start(); 
           setIsBroadcasting(true); 
-          setStatusMsg("KAYITTA - Konuşun");
+          setStatusMsg("KAYITTA...");
           
           setTimeout(() => { 
               if (mediaRecorderRef.current?.state === 'recording') stopBroadcast(); 
           }, 60000); 
           
       } catch (err) { 
-          console.error("Mikrofon Hatası Detayı:", err);
-          setStatusMsg("Mikrofon hatası! İzinleri kontrol edin."); 
+          console.error("Mikrofon Hatası:", err);
+          setStatusMsg("Mikrofon Hatası"); 
       }
   };
   
@@ -615,7 +638,7 @@ export default function App() {
   // --- ANA EKRAN ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
-      {/* Gizli Audio Elementleri: Bu elementler DOM'da kalıcı olarak bulunmalı */}
+      {/* Gizli Audio Elementleri */}
       <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={bellAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
@@ -656,14 +679,25 @@ export default function App() {
                     </div>
                     
                     {isStation && (
-                        <div className="mb-4 p-4 bg-slate-950 rounded-xl border border-emerald-900/30">
-                             <div className="flex justify-between items-center"><span className="text-xs font-bold text-emerald-500 flex items-center gap-2"><Settings size={14}/> Terminal Şifresi</span><button className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold" onClick={async()=>{ const newPass = prompt("Yeni Terminal Şifresi Girin:", systemState.terminalPassword); if(newPass) await updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{terminalPassword: newPass}); }}>Değiştir</button></div>
+                        <div className="space-y-4">
+                             <div className="p-4 bg-slate-950 rounded-xl border border-emerald-900/30">
+                                 <div className="flex justify-between items-center"><span className="text-xs font-bold text-emerald-500 flex items-center gap-2"><Settings size={14}/> Terminal Şifresi</span><button className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold" onClick={async()=>{ const newPass = prompt("Yeni Terminal Şifresi Girin:", systemState.terminalPassword); if(newPass) await updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{terminalPassword: newPass}); }}>Değiştir</button></div>
+                             </div>
+                             {/* --- YENİ: Ses Motoru Başlatma Butonu --- */}
+                             {!isAudioContextReady && (
+                                <button onClick={unlockAudioContext} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-white flex items-center justify-center gap-2 animate-pulse shadow-lg shadow-emerald-900/20">
+                                    <Power size={20} />
+                                    SES MOTORUNU BAŞLAT
+                                </button>
+                             )}
                         </div>
                     )}
                     
-                    <button onClick={()=>{
-                        updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{stopSignal:Date.now()});
-                    }} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
+                    {!isStation && (
+                       <button onClick={()=>{
+                          updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{stopSignal:Date.now()});
+                      }} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group mt-4"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
+                    )}
                 </div>
                 <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 flex flex-col items-center justify-center relative min-h-[250px]">
                     <button onClick={toggleBroadcast} className={`w-32 h-32 rounded-full flex items-center justify-center transition-all ${isBroadcasting ? 'bg-red-600 animate-pulse shadow-2xl shadow-red-900/50 scale-110' : 'bg-slate-800 hover:bg-slate-700 shadow-xl'}`}>
@@ -677,6 +711,7 @@ export default function App() {
             </div>
         )}
 
+        {/* ... (DİĞER TABLAR - DEĞİŞİKLİK YOK) ... */}
         {activeTab === 'planner' && (
             <div className="space-y-6 animate-in slide-in-from-bottom-4 relative">
                  {scheduleModal.open && (
