@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "19.01.20.90"; // Build Fix (Unused Vars) & Audio Element Restore
+const VERSION = "19.01.20.95"; // Anons Revert & UI Temizlik
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -157,7 +157,6 @@ export default function App() {
   
   const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
   const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
-  const [audioUnlocked, setAudioUnlocked] = useState(false);
 
   const [activeTab, setActiveTab] = useState('control'); 
   const [systemState, setSystemState] = useState({
@@ -225,7 +224,6 @@ export default function App() {
   // --- SES İŞLEME MANTIĞI ---
   const processAudioQueue = useCallback(() => {
       const audioEl = stationAudioRef.current;
-      // stationAudioRef.current'ın var olup olmadığını kontrol et
       if (!audioEl || isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
       
       isPlayingQueueRef.current = true;
@@ -233,7 +231,7 @@ export default function App() {
       
       try {
           audioEl.src = nextChunk;
-          audioEl.load(); // Zorunlu yükleme
+          audioEl.load(); 
           audioEl.volume = (systemState.volume || 50) / 100;
           
           const playPromise = audioEl.play();
@@ -305,8 +303,7 @@ export default function App() {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const audioData = change.doc.data();
-                    // 5 dakika tolerans tanıyalım (Saat farkı vs için)
-                    if (Date.now() - audioData.createdAt < 300000) { 
+                    if (Date.now() - audioData.createdAt < 60000) { 
                         playAudioChunk(audioData.url);
                     }
                     deleteDoc(change.doc.ref).catch(() => {});
@@ -345,15 +342,22 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- TELSİZ MODU ---
+  // --- TELSİZ MODU (ESKİ SÜRÜME DÖNÜLDÜ) ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
   
   const startBroadcast = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           
-          // DÜZELTME: MimeType zorlaması kaldırıldı. Tarayıcı varsayılanı kullanılsın.
-          mediaRecorderRef.current = new MediaRecorder(stream);
+          let options = {};
+          // ESKİ VERSİYON MANTIĞI: Codec'leri açıkça belirt
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = { mimeType: 'audio/webm;codecs=opus' };
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            options = { mimeType: 'audio/mp4' };
+          }
+
+          mediaRecorderRef.current = new MediaRecorder(stream, options);
           audioChunksRef.current = [];
           
           mediaRecorderRef.current.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
@@ -362,10 +366,10 @@ export default function App() {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
                  
-                 // Tarayıcının ürettiği orijinal type neyse onu kullan
-                 const blob = new Blob(audioChunksRef.current, { type: mediaRecorderRef.current.mimeType });
+                 // ESKİ VERSİYON: Seçilen options'ı kullan
+                 const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType || 'audio/webm' });
                  
-                 if (blob.size > 700 * 1024) {
+                 if (audioBlob.size > 800 * 1024) {
                      setIsUploadingChunk(false);
                      setStatusMsg("HATA: Kayıt çok uzun!");
                      return;
@@ -381,7 +385,7 @@ export default function App() {
                      } catch (err) { console.error(err); setStatusMsg("Gönderim Hatası!"); } 
                      finally { setIsUploadingChunk(false); setTimeout(() => setStatusMsg(''), 2000); }
                  };
-                 reader.readAsDataURL(blob);
+                 reader.readAsDataURL(audioBlob);
              }
           };
           
@@ -392,7 +396,7 @@ export default function App() {
           if(autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
           autoStopTimerRef.current = setTimeout(() => { 
               if (mediaRecorderRef.current?.state === 'recording') stopBroadcast(); 
-          }, 30000); 
+          }, 60000); 
           
       } catch (err) { 
           console.error(err);
@@ -423,26 +427,7 @@ export default function App() {
           setProfileName('Terminal'); 
           localStorage.setItem('bell_is_station', 'true'); 
           setPasswordModal(false);
-          setAudioUnlocked(false); 
       } else { alert("Hatalı Terminal Şifresi!"); }
-  };
-
-  // SES KİLİDİNİ AÇMA FONKSİYONU
-  const unlockAudio = () => {
-      if(stationAudioRef.current) {
-          // Sessiz WAV Dosyası (Base64)
-          stationAudioRef.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-          stationAudioRef.current.volume = 1.0;
-          stationAudioRef.current.play().then(() => {
-              setAudioUnlocked(true);
-              setStatusMsg("Ses Motoru Aktif Edildi");
-              setTimeout(()=>setStatusMsg(''), 2000);
-          }).catch(e => {
-              console.error("Unlock failed", e);
-              // Hatayı ekrana da basalım
-              setStatusMsg("Ses Hatası: " + (e.message || "Bilinmiyor"));
-          });
-      }
   };
 
   const handleProfileLogin = (e) => {
@@ -585,20 +570,6 @@ export default function App() {
       {/* Gizli Audio Elementleri - Geri Eklendi */}
       <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
-
-      {/* Terminal için Ses Kilit Ekranı */}
-      {isStation && !audioUnlocked && (
-          <div className="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-6 text-center">
-              <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center mb-6 animate-pulse">
-                  <Power size={48} className="text-white"/>
-              </div>
-              <h1 className="text-2xl font-black text-white mb-2">SES SİSTEMİ KAPALI</h1>
-              <p className="text-slate-400 mb-8 max-w-sm">Tarayıcı kısıtlamaları nedeniyle ses çıkışı pasif durumda. Aktifleştirmek için butona basın.</p>
-              <button onClick={unlockAudio} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-lg shadow-xl shadow-emerald-900/50 transition-all active:scale-95">
-                  SES MOTORUNU BAŞLAT
-              </button>
-          </div>
-      )}
 
       <header className="bg-slate-900/50 backdrop-blur-xl border-b border-slate-800 p-4 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
