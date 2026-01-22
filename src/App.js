@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.47"; // Ses Formatı Düzeltmesi (MimeType Fix)
+const VERSION = "22.01.16.48"; // Ses Motoru Ayrıştırması & Mikrofon Fix
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -185,8 +185,11 @@ export default function App() {
   const [copyModal, setCopyModal] = useState({ open: false, type: 'day', sourceData: null });
 
   // Refs
+  // YENİ: Ses oynatıcılarını ayırdık. Ziller bellAudio, anonslar stationAudio'da.
   const stationAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null); 
+  const bellAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null); 
   const previewAudioRef = useRef(typeof window !== 'undefined' ? new Audio() : null);
+  
   const mediaRecorderRef = useRef(null);
   const audioQueueRef = useRef([]); 
   const isPlayingQueueRef = useRef(false);
@@ -205,9 +208,11 @@ export default function App() {
      }
 
      const stationAudio = stationAudioRef.current;
+     const bellAudio = bellAudioRef.current;
      const previewAudio = previewAudioRef.current;
 
-     if(stationAudio) stationAudio.onerror = (e) => console.warn("Audio Error:", e);
+     if(stationAudio) stationAudio.onerror = (e) => console.warn("Anons Audio Error:", e);
+     if(bellAudio) bellAudio.onerror = (e) => console.warn("Zil Audio Error:", e);
      if(previewAudio) previewAudio.onerror = (e) => console.warn("Preview Error:", e);
 
      const initAuth = async () => {
@@ -227,13 +232,14 @@ export default function App() {
 
      return () => {
          if(stationAudio) stationAudio.pause();
+         if(bellAudio) bellAudio.pause();
          if(previewAudio) previewAudio.pause();
      };
   }, []);
 
-  // --- SES İŞLEME MANTIĞI ---
+  // --- SES İŞLEME MANTIĞI (ANONSLAR İÇİN) ---
   const processAudioQueue = useCallback(() => {
-      const audioEl = stationAudioRef.current;
+      const audioEl = stationAudioRef.current; // Sadece Anonsları çalar
       if (!audioEl || isPlayingQueueRef.current || audioQueueRef.current.length === 0) return;
       
       isPlayingQueueRef.current = true;
@@ -274,16 +280,28 @@ export default function App() {
       if (docSnap.exists()) {
         const data = docSnap.data();
         
-        if (isStation && stationAudioRef.current) {
-            if (data.volume !== undefined) stationAudioRef.current.volume = Math.max(0, Math.min(1, data.volume / 100));
+        if (isStation) {
+            // Ses seviyesini her iki oynatıcıya da uygula
+            const vol = Math.max(0, Math.min(1, (data.volume || 50) / 100));
+            if (stationAudioRef.current) stationAudioRef.current.volume = vol;
+            if (bellAudioRef.current) bellAudioRef.current.volume = vol;
             
+            // Sesi Kes sinyali
             if (data.stopSignal && data.stopSignal !== lastStopSignalRef.current) {
                 if (lastStopSignalRef.current !== 0) {
-                    stationAudioRef.current.pause(); 
-                    stationAudioRef.current.currentTime = 0; 
+                    // Her iki oynatıcıyı da durdur
+                    if(stationAudioRef.current) {
+                        stationAudioRef.current.pause(); 
+                        stationAudioRef.current.currentTime = 0;
+                    }
+                    if(bellAudioRef.current) {
+                        bellAudioRef.current.pause();
+                        bellAudioRef.current.currentTime = 0;
+                    }
+
                     audioQueueRef.current = []; 
                     isPlayingQueueRef.current = false;
-                    setStatusMsg("Ses Kesildi.");
+                    setStatusMsg("Tüm Sesler Kesildi.");
                     setTimeout(() => setStatusMsg(''), 1500);
                 }
                 lastStopSignalRef.current = data.stopSignal;
@@ -311,8 +329,7 @@ export default function App() {
                     const audioData = change.doc.data();
                     
                     setStatusMsg("📡 ANONS VERİSİ GELDİ! İŞLENİYOR...");
-                    console.log("Firebase'den ses verisi alındı:", audioData);
-
+                    
                     if (Date.now() - audioData.createdAt < 60000) { 
                         playAudioChunk(audioData.url);
                     } else {
@@ -327,7 +344,7 @@ export default function App() {
     return () => { unsubInst(); unsubSchedule(); unsubSounds(); unsubLive(); };
   }, [institution, isFirebaseReady, isStation, playAudioChunk]);
 
-  // --- ZAMANLAYICI ---
+  // --- ZAMANLAYICI (ZİL SESLERİ İÇİN) ---
   useEffect(() => {
     if (!isStation || !institution) return;
     const interval = setInterval(() => {
@@ -340,11 +357,14 @@ export default function App() {
         if (item.day === currentDay && item.time === currentTime) {
           const triggerKey = `${item.id}-${currentTime}-${now.getDate()}`;
           if (systemState.lastTriggeredBell !== triggerKey) {
-            if (!isPlayingQueueRef.current && stationAudioRef.current) {
-                stationAudioRef.current.src = item.soundUrl;
-                stationAudioRef.current.onended = null; 
-                stationAudioRef.current.volume = (systemState.volume || 50) / 100;
-                stationAudioRef.current.play().catch(e => console.error(e));
+            
+            // YENİ: Ziller için bellAudioRef kullanıyoruz.
+            const bellAudio = bellAudioRef.current;
+            if (bellAudio) {
+                // Eğer zaten bir anons çalıyorsa, zili çalma veya bekle (şu an zili direkt çalıyoruz, karışabilir ama en azından teknik olarak bozulmaz)
+                bellAudio.src = item.soundUrl;
+                bellAudio.volume = (systemState.volume || 50) / 100;
+                bellAudio.play().catch(e => console.error("Zil çalma hatası:", e));
             }
             updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'institutions', institution.uid), { lastTriggeredBell: triggerKey }).catch(()=>{});
           }
@@ -354,24 +374,35 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isStation, schedule, systemState.lastTriggeredBell, systemState.volume, institution]);
 
-  // --- TELSİZ MODU (DÜZELTİLMİŞ) ---
+  // --- TELSİZ MODU (MİKROFON & FORMAT FIX) ---
   const toggleBroadcast = () => isBroadcasting ? stopBroadcast() : startBroadcast();
   
   const startBroadcast = async () => {
       try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // YENİ: Gürültü ve yankı engelleme eklendi
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+              audio: {
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: true
+              } 
+          });
           
-          // DÜZELTME: Tarayıcının desteklediği doğru MIME türünü bul
-          let mimeType = 'audio/webm';
+          // YENİ: MimeType zorlamasını kaldırdık, önce destekleneni bulmaya çalış
+          let options = undefined;
           if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-              mimeType = 'audio/webm;codecs=opus';
+              options = { mimeType: 'audio/webm;codecs=opus' };
           } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-              mimeType = 'audio/mp4';
+              options = { mimeType: 'audio/mp4' };
           }
-          
-          // MediaRecorder'ı bu tür ile başlat
-          mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
-          mediaRecorderRef.current.mimeType = mimeType; // Türü sakla
+          // Hiçbiri yoksa undefined gider, tarayıcı varsayılanı seçer.
+
+          try {
+            mediaRecorderRef.current = new MediaRecorder(stream, options);
+          } catch (e) {
+             console.warn("MediaRecorder options ile başlatılamadı, varsayılan deneniyor.", e);
+             mediaRecorderRef.current = new MediaRecorder(stream); // Fallback
+          }
           
           audioChunksRef.current = [];
           
@@ -383,12 +414,11 @@ export default function App() {
              if (audioChunksRef.current.length > 0) {
                  setIsUploadingChunk(true); setStatusMsg("Ses gönderiliyor...");
                  
-                 // DÜZELTME: Blob oluştururken doğru MIME türünü kullan
-                 // Bu sayede oluşan DataURL "data:audio/webm;base64,..." formatında olacak
+                 // Blob oluştururken kaydedicinin kendi mimeType'ını kullan
                  const recordedMimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
                  const audioBlob = new Blob(audioChunksRef.current, { type: recordedMimeType }); 
                  
-                 if (audioBlob.size > 5 * 1024 * 1024) { // Limit biraz artırıldı
+                 if (audioBlob.size > 5 * 1024 * 1024) { 
                      setIsUploadingChunk(false);
                      setStatusMsg("HATA: Kayıt çok büyük!");
                      return;
@@ -417,8 +447,8 @@ export default function App() {
           }, 60000); 
           
       } catch (err) { 
-          console.error(err);
-          setStatusMsg("Mikrofon hatası!"); 
+          console.error("Mikrofon Hatası Detayı:", err);
+          setStatusMsg("Mikrofon hatası! İzinleri kontrol edin."); 
       }
   };
   
@@ -585,6 +615,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 relative">
       <audio ref={stationAudioRef} className="hidden" crossOrigin="anonymous" />
+      <audio ref={bellAudioRef} className="hidden" crossOrigin="anonymous" />
       <audio ref={previewAudioRef} className="hidden" crossOrigin="anonymous" />
 
       <header className="bg-slate-900/50 backdrop-blur-xl border-b border-slate-800 p-4 sticky top-0 z-50">
