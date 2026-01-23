@@ -5,15 +5,17 @@ import {
   collection, addDoc, deleteDoc, arrayUnion, arrayRemove, query, getDocs, where
 } from 'firebase/firestore';
 import { 
-  getAuth, signInAnonymously, signInWithCustomToken 
+  getAuth, signInAnonymously, signInWithCustomToken, 
+  createUserWithEmailAndPassword, signInWithEmailAndPassword, 
+  sendEmailVerification, signOut
 } from 'firebase/auth';
 import { 
   Bell, Mic, Volume2, Users, Monitor,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Activity
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power, Activity
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.54"; // Terminal UI Update & Cleanup
+const VERSION = "22.01.16.55"; // E-posta Doğrulama & Auth Fix
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -43,6 +45,7 @@ const AuthScreen = ({ onLogin }) => {
     const [isRegister, setIsRegister] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [verificationSent, setVerificationSent] = useState(false);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -53,19 +56,23 @@ const AuthScreen = ({ onLogin }) => {
         const password = fd.get('password');
 
         try {
-            const instRef = collection(db, 'artifacts', appId, 'public', 'data', 'institutions');
-            
             if (isRegister) {
                 const terminalPass = fd.get('terminalPass');
                 const instName = fd.get('instName');
 
-                const q = query(instRef, where("email", "==", email));
-                const snap = await getDocs(q);
-                if (!snap.empty) throw new Error("Bu e-posta adresi zaten kayıtlı.");
+                // 1. Firebase Auth ile Kullanıcı Oluştur
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
 
-                const newInstRef = await addDoc(instRef, {
-                    email,
-                    password, 
+                // 2. Doğrulama E-postası Gönder
+                await sendEmailVerification(user);
+
+                // 3. Firestore'a Kurum Bilgilerini Kaydet
+                // Not: Şifreyi artık Firestore'da saklamıyoruz (Güvenlik gereği)
+                const instRef = collection(db, 'artifacts', appId, 'public', 'data', 'institutions');
+                await addDoc(instRef, {
+                    authUid: user.uid, // Auth ID ile eşleştirme
+                    email: email,
                     institutionName: instName,
                     terminalPassword: terminalPass,
                     createdAt: Date.now(),
@@ -74,24 +81,65 @@ const AuthScreen = ({ onLogin }) => {
                     stopSignal: 0
                 });
 
-                onLogin({ uid: newInstRef.id, name: instName });
+                // 4. Çıkış yap ve bilgilendir
+                await signOut(auth);
+                setVerificationSent(true);
 
             } else {
-                const q = query(instRef, where("email", "==", email), where("password", "==", password));
+                // GİRİŞ İŞLEMİ
+                
+                // 1. Firebase Auth ile Giriş Yap
+                const userCredential = await signInWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+
+                // 2. E-posta Doğrulama Kontrolü
+                if (!user.emailVerified) {
+                    await signOut(auth); // Oturumu kapat
+                    throw new Error("Lütfen e-posta adresinize gelen bağlantı ile hesabınızı doğrulayın.");
+                }
+
+                // 3. Firestore'dan Kurum Verisini Çek
+                const instRef = collection(db, 'artifacts', appId, 'public', 'data', 'institutions');
+                const q = query(instRef, where("email", "==", email));
                 const snap = await getDocs(q);
                 
-                if (snap.empty) throw new Error("Hatalı e-posta veya şifre.");
+                if (snap.empty) throw new Error("Kurum kaydı bulunamadı.");
 
                 const userData = snap.docs[0].data();
                 onLogin({ uid: snap.docs[0].id, name: userData.institutionName });
             }
         } catch (err) {
             console.error("Auth Error:", err);
-            setError(err.message || "İşlem başarısız.");
+            let msg = "İşlem başarısız.";
+            if (err.code === 'auth/email-already-in-use') msg = "Bu e-posta zaten kullanımda.";
+            else if (err.code === 'auth/invalid-credential') msg = "Hatalı e-posta veya şifre.";
+            else if (err.code === 'auth/too-many-requests') msg = "Çok fazla deneme yaptınız, lütfen bekleyin.";
+            else msg = err.message;
+            
+            setError(msg);
         } finally {
             setLoading(false);
         }
     };
+
+    if (verificationSent) {
+        return (
+            <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+                <div className="bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] shadow-2xl text-center max-w-md w-full animate-in fade-in">
+                    <div className="w-20 h-20 bg-emerald-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <Mail size={40} className="text-emerald-500"/>
+                    </div>
+                    <h2 className="text-2xl font-bold text-white mb-2">Doğrulama E-postası Gönderildi!</h2>
+                    <p className="text-slate-400 mb-6">
+                        Lütfen gelen kutunuzu (ve spam klasörünü) kontrol edin. E-postadaki linke tıkladıktan sonra giriş yapabilirsiniz.
+                    </p>
+                    <button onClick={() => { setVerificationSent(false); setIsRegister(false); }} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-xl transition-colors">
+                        Giriş Ekranına Dön
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative">
@@ -157,6 +205,7 @@ export default function App() {
   
   const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
   const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
+  const [isAudioContextReady, setIsAudioContextReady] = useState(false);
   const [debugLogs, setDebugLogs] = useState([]);
 
   const [activeTab, setActiveTab] = useState('control'); 
@@ -235,6 +284,30 @@ export default function App() {
      };
      initAuth();
   }, [addLog]);
+
+  // --- SES MOTORUNU BAŞLATMA ---
+  const unlockAudioContext = () => {
+      const station = stationAudioRef.current;
+      const bell = bellAudioRef.current;
+
+      if(station && bell) {
+          station.play().then(() => {
+              station.pause();
+              station.currentTime = 0;
+              addLog("Anons Motoru Hazır");
+          }).catch((e) => addLog(`Anons Motoru Hata: ${e.name}`));
+
+          bell.play().then(() => {
+              bell.pause();
+              bell.currentTime = 0;
+              addLog("Zil Motoru Hazır");
+          }).catch((e) => addLog(`Zil Motoru Hata: ${e.name}`));
+          
+          setIsAudioContextReady(true);
+          setStatusMsg("Sistem Hazır!");
+          setTimeout(() => setStatusMsg(''), 2000);
+      }
+  };
 
   // --- SES İŞLEME MANTIĞI ---
   const processAudioQueue = useCallback(() => {
@@ -608,6 +681,13 @@ export default function App() {
                                 {debugLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
                                 {debugLogs.length === 0 && <div>Log bekleniyor...</div>}
                              </div>
+
+                             {!isAudioContextReady && (
+                                <button onClick={unlockAudioContext} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-white flex items-center justify-center gap-2 animate-pulse shadow-lg shadow-emerald-900/20">
+                                    <Power size={20} />
+                                    SES MOTORUNU BAŞLAT
+                                </button>
+                             )}
                         </div>
                     )}
                     
