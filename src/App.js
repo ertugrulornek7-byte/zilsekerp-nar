@@ -9,11 +9,11 @@ import {
 } from 'firebase/auth';
 import { 
   Bell, Mic, Volume2, Users, Monitor,
-  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Power, Activity
+  Plus, Edit2, X, Music, Calendar, StopCircle, UserPlus, Trash2, Copy, ArrowRight, LogOut, AlertTriangle, Loader2, Building2, Lock, Mail, User, Play, Pause, Settings, Activity
 } from 'lucide-react';
 
 // --- VERSİYON NUMARASI ---
-const VERSION = "22.01.16.53"; // Build Fix: Unused Vars Removed
+const VERSION = "22.01.16.54"; // Terminal UI Update & Cleanup
 
 // --- Firebase Yapılandırması (SABİT) ---
 const firebaseConfig = {
@@ -157,7 +157,6 @@ export default function App() {
   
   const [profileName, setProfileName] = useState(() => localStorage.getItem('bell_profile_name') || '');
   const [isStation, setIsStation] = useState(() => localStorage.getItem('bell_is_station') === 'true');
-  const [isAudioContextReady, setIsAudioContextReady] = useState(false);
   const [debugLogs, setDebugLogs] = useState([]);
 
   const [activeTab, setActiveTab] = useState('control'); 
@@ -237,30 +236,6 @@ export default function App() {
      initAuth();
   }, [addLog]);
 
-  // --- SES MOTORUNU BAŞLATMA ---
-  const unlockAudioContext = () => {
-      const station = stationAudioRef.current;
-      const bell = bellAudioRef.current;
-
-      if(station && bell) {
-          station.play().then(() => {
-              station.pause();
-              station.currentTime = 0;
-              addLog("Anons Motoru Hazır");
-          }).catch((e) => addLog(`Anons Motoru Hata: ${e.name}`));
-
-          bell.play().then(() => {
-              bell.pause();
-              bell.currentTime = 0;
-              addLog("Zil Motoru Hazır");
-          }).catch((e) => addLog(`Zil Motoru Hata: ${e.name}`));
-          
-          setIsAudioContextReady(true);
-          setStatusMsg("Sistem Hazır!");
-          setTimeout(() => setStatusMsg(''), 2000);
-      }
-  };
-
   // --- SES İŞLEME MANTIĞI ---
   const processAudioQueue = useCallback(() => {
       const audioEl = stationAudioRef.current;
@@ -290,7 +265,6 @@ export default function App() {
           addLog(`Çalma Hatası: ${e.name}`);
           if (e.name === 'NotAllowedError') {
               setStatusMsg("SES İZNİ YOK!");
-              setIsAudioContextReady(false);
           }
           processAudioQueue(); 
       });
@@ -341,7 +315,6 @@ export default function App() {
     // CANLI YAYIN DİNLEYİCİSİ
     let unsubLive = () => {};
     if (isStation) {
-        // Index hatasını önlemek için orderBy KULLANMIYORUZ
         const q = query(
             collection(db, 'artifacts', appId, 'public', 'data', 'live_stream'), 
             where("institutionId", "==", instId)
@@ -630,27 +603,17 @@ export default function App() {
                                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-emerald-500 flex items-center gap-2"><Settings size={14}/> Terminal Şifresi</span><button className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold" onClick={async()=>{ const newPass = prompt("Yeni Terminal Şifresi Girin:", systemState.terminalPassword); if(newPass) await updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{terminalPassword: newPass}); }}>Değiştir</button></div>
                              </div>
                              
-                             {/* --- LOG PANELI (SADECE TERMİNALDE) --- */}
                              <div className="bg-black/50 p-4 rounded-xl border border-slate-800 h-40 overflow-y-auto font-mono text-[10px] text-slate-400">
                                 <div className="flex items-center gap-2 text-emerald-500 mb-2 font-bold"><Activity size={12}/> SİSTEM LOGLARI</div>
                                 {debugLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
                                 {debugLogs.length === 0 && <div>Log bekleniyor...</div>}
                              </div>
-
-                             {!isAudioContextReady && (
-                                <button onClick={unlockAudioContext} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-white flex items-center justify-center gap-2 animate-pulse shadow-lg shadow-emerald-900/20">
-                                    <Power size={20} />
-                                    SES MOTORUNU BAŞLAT
-                                </button>
-                             )}
                         </div>
                     )}
                     
-                    {!isStation && (
-                       <button onClick={()=>{
-                          updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{stopSignal:Date.now()});
-                      }} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group mt-4"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
-                    )}
+                    <button onClick={()=>{
+                        updateDoc(doc(db,'artifacts',appId,'public','data','institutions',institution.uid),{stopSignal:Date.now()});
+                    }} className="w-full bg-red-900/30 hover:bg-red-600 text-red-500 hover:text-white border border-red-900/50 p-4 rounded-xl flex items-center justify-center gap-3 active:scale-95 group mt-4"><StopCircle size={24}/><span className="font-bold">SESİ KES</span></button>
                 </div>
                 <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 flex flex-col items-center justify-center relative min-h-[250px]">
                     <button onClick={toggleBroadcast} className={`w-32 h-32 rounded-full flex items-center justify-center transition-all ${isBroadcasting ? 'bg-red-600 animate-pulse shadow-2xl shadow-red-900/50 scale-110' : 'bg-slate-800 hover:bg-slate-700 shadow-xl'}`}>
